@@ -58,15 +58,15 @@ kanibar checks the token's format, verifies it with WaniKani, and only then save
 
 ### The bar pill
 
-| Pill        | Meaning                                                             |
-|-------------|---------------------------------------------------------------------|
-| `鰐 49 · 69` | 49 reviews and 69 lessons available now                             |
-| `鰐 49`      | 49 reviews, with lessons hidden (or none available)                 |
-| `鰐 ✓`      | All reviews done. The check uses your theme's accent color and briefly pops when you clear the last review |
-| `鰐 ✓ · 69` | Reviews done, lessons still available                               |
-| `鰐 …`       | Loading for the first time                                          |
-| `鰐 !`       | The last request failed. Open the popup for details                 |
-| `鰐 —`       | Not connected yet. Click to add a token                             |
+| Pill | Meaning |
+|------|---------|
+| <img src="assets/pill/normal.png" alt="鰐 49 · 69" height="24"> | 49 reviews and 69 lessons available now |
+| <img src="assets/pill/noLessons.png" alt="鰐 49" height="24"> | 49 reviews, with lessons hidden (`showLessons` off) or none available |
+| <img src="assets/pill/done.png" alt="鰐 check · 69" height="24"> | All reviews done, lessons still available. The check uses your theme's accent color, matches the digits' height, and briefly pops when you clear the last review |
+| <img src="assets/pill/doneOnly.png" alt="鰐 check" height="24"> | All reviews and lessons done (hidden instead if `hideWhenIdle` is on) |
+| <img src="assets/pill/loading.png" alt="鰐 …" height="24"> | Loading for the first time |
+| <img src="assets/pill/error.png" alt="鰐 !" height="24"> | The last request failed. Open the popup for details |
+| <img src="assets/pill/noToken.png" alt="鰐 —" height="24"> | Not connected yet. Click to add a token |
 
 | Mouse        | Action                                    |
 |--------------|-------------------------------------------|
