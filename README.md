@@ -5,7 +5,7 @@
 kanibar is an Omarchy shell plugin. It shows your pending WaniKani reviews and lessons in the bar. Click it for a popup with your level progress, SRS stages and the review forecast. It can also remind you in the evening if your reviews aren't done yet.
 
 <p align="center">
-  <img src="assets/popup.png" alt="kanibar popup with review and lesson counts, level kanji progress, SRS stages and 24-hour forecast" width="360">
+  <img src="https://github.com/erfoip/kanibar/releases/download/screenshots/popup.png" alt="kanibar popup with review and lesson counts, level kanji progress, SRS stages and 24-hour forecast" width="360">
 </p>
 
 ## Features
@@ -47,7 +47,7 @@ Prefer `centerBegin` or `centerEnd` for a spot next to the clock. A widget added
 On first launch the pill shows `鰐 —`. Click it, and the popup asks for a token:
 
 <p align="center">
-  <img src="assets/token.png" alt="Token entry in the kanibar popup" width="360">
+  <img src="https://github.com/erfoip/kanibar/releases/download/screenshots/token.png" alt="Token entry in the kanibar popup" width="360">
 </p>
 
 1. Click **Get a token ↗** or go to [wanikani.com/settings/personal_access_tokens](https://www.wanikani.com/settings/personal_access_tokens).
@@ -82,7 +82,7 @@ The counts refresh in the background on an interval (see `refreshMinutes`), and 
 
 - **Reviews / Lessons:** the same counts as the pill. When there's something to do, the tile shows **Start reviews ↗** or **Start lessons ↗** and opens that session in your browser. Once your reviews are cleared, the Reviews tile changes to **All done**, with an accent border and the time until your next reviews:
 
-  <p align="center"><img src="assets/done.png" alt="kanibar with all reviews done: check mark in the bar and an All done tile" width="360"></p>
+  <p align="center"><img src="https://github.com/erfoip/kanibar/releases/download/screenshots/done.png" alt="kanibar with all reviews done: check mark in the bar and an All done tile" width="360"></p>
 
 - **Level N kanji:** every kanji of your current level, in lesson order:
   - **Solid accent fill:** passed (reached Guru).
@@ -102,7 +102,7 @@ Level progress and SRS stages are loaded only while the popup is open, and at mo
 Click the **gear** in the popup header to open the settings page. Escape or the **←** arrow goes back. Every change takes effect immediately.
 
 <p align="center">
-  <img src="assets/settings.png" alt="kanibar settings page" width="360">
+  <img src="https://github.com/erfoip/kanibar/releases/download/screenshots/settings.png" alt="kanibar settings page" width="360">
 </p>
 
 Settings are stored in this widget's entry in `~/.config/omarchy/shell.json`. Anything you don't change keeps its default, so you can also edit that file by hand or use [`setSetting`](#command-line-and-keybindings).
@@ -130,7 +130,7 @@ How often the bar counts are fetched in the background. While it's on, kanibar a
 ### Daily reminder
 
 <p align="center">
-  <img src="assets/notification.png" alt="kanibar reminder notification: 49 WaniKani reviews waiting, with a Start reviews button" width="420">
+  <img src="https://github.com/erfoip/kanibar/releases/download/screenshots/notification.png" alt="kanibar reminder notification: 49 WaniKani reviews waiting, with a Start reviews button" width="420">
 </p>
 
 #### `reminderEnabled`: Remind me if reviews are waiting
@@ -259,7 +259,6 @@ omarchy restart shell                              # QML hot reload is unreliabl
 | `i18n/` | Translation catalogs (`en.json`) |
 | `test/` | `model.test.js`: Model.js unit tests. `contracts.test.js`: every string exists in `en.json` and is used, every text renders plain text, animations stay within Omarchy's motion rules |
 | `preview.png` | Marketplace preview |
-| `assets/` | README screenshots |
 
 ## License
 
