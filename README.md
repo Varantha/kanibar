@@ -238,7 +238,7 @@ git clone git@github.com:erfoip/kanibar.git
 ln -sfn "$PWD/kanibar" ~/.config/omarchy/plugins/io.github.erfoip.kanibar
 omarchy-shell shell rescanPlugins && omarchy plugin enable io.github.erfoip.kanibar
 
-node --test kanibar/test/                          # Model.js unit tests
+node --test kanibar/test/                          # unit and QML contract tests
 omarchy plugin validate "$PWD/kanibar"             # manifest schema
 qmllint -I "$OMARCHY_PATH/shell" kanibar/*.qml
 omarchy restart shell                              # QML hot reload is unreliable
@@ -257,7 +257,7 @@ omarchy restart shell                              # QML hot reload is unreliabl
 | `Model.js` | Pure parsing, validation and placeholder helpers (no QML), unit-tested in `test/` |
 | `Palette.js` | Colors derived from the bar foreground |
 | `i18n/` | Translation catalogs (`en.json`) |
-| `test/` | Unit tests, plus checks that every string exists in `en.json`, every `Text` renders plain text, and animations stay within Omarchy's motion rules |
+| `test/` | `model.test.js`: Model.js unit tests. `contracts.test.js`: every string exists in `en.json` and is used, every text renders plain text, animations stay within Omarchy's motion rules |
 | `preview.png` | Marketplace preview |
 | `assets/` | README screenshots |
 
