@@ -164,7 +164,9 @@ function hourlySlots(forecast, now, hours) {
 
 // ---------- Bar pill ----------
 // Shown instead of "0" once every review is done.
-var DONE_MARK = ""   // Nerd Font check (nf-fa-check), bolder than ✓ at bar size
+// Nerd Font check (nf-fa-check, U+F00C), bolder than ✓ at bar size. Written
+// as an escape: private-use glyphs are invisible and easy to lose in edits.
+var DONE_MARK = "\uf00c"
 
 // The pill in two parts so the done mark can take the accent color:
 // main = review count or the check, extra = "· <lessons>" or "".
