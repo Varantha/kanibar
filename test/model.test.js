@@ -83,3 +83,42 @@ test("tokenProblem", () => {
   assert.match(Model.tokenProblem("https://www.wanikani.com"), /look like/)
   assert.match(Model.tokenProblem("abc123"), /look like/)
 })
+
+test("srsBreakdown fills missing groups with 0", () => {
+  const b = Model.srsBreakdown({ apprentice: 80, burned: 1200 })
+  assert.deepEqual([...b.map(g => g.count)], [80, 0, 0, 0, 1200])
+  assert.deepEqual([...b.map(g => g.short)], ["APPR", "GURU", "MAST", "ENLI", "BURN"])
+  assert.equal(Model.totalCount({ total_count: 42 }), 42)
+  assert.equal(Model.totalCount(null), 0)
+})
+
+test("levelProgress applies the 90% Guru rule and skips hidden kanji", () => {
+  const subjects = { data: [] }
+  for (let i = 1; i <= 11; i++) {
+    subjects.data.push({ id: i, data: { characters: "字" + i, lesson_position: 12 - i, meanings: [{ meaning: "m" + i, primary: true }], hidden_at: i === 11 ? "2020-01-01T00:00:00Z" : null } })
+  }
+  const assignments = { data: [
+    { data: { subject_id: 1, srs_stage: 5, passed_at: "2026-11-01T00:00:00Z" } },
+    { data: { subject_id: 2, srs_stage: 7, passed_at: "2026-11-01T00:00:00Z" } },
+    { data: { subject_id: 3, srs_stage: 3, passed_at: null } },
+    { data: { subject_id: 4, srs_stage: 0, passed_at: null } }
+  ] }
+  const p = Model.levelProgress(subjects, assignments, 12)
+  assert.equal(p.total, 10)            // hidden one dropped
+  assert.equal(p.passed, 2)
+  assert.equal(p.required, 9)          // ceil(10 * 0.9)
+  assert.equal(p.remaining, 7)
+  assert.equal(p.items[0].characters, "字10")  // sorted by lesson_position
+  const byId = Object.fromEntries(p.items.map(it => [it.id, Model.itemState(it)]))
+  assert.equal(byId[1], "passed")
+  assert.equal(byId[3], "learning")
+  assert.equal(byId[4], "lesson")
+  assert.equal(byId[5], "locked")
+})
+
+test("stageName", () => {
+  assert.equal(Model.stageName(-1), "Locked")
+  assert.equal(Model.stageName(3), "Apprentice 3")
+  assert.equal(Model.stageName(6), "Guru 2")
+  assert.equal(Model.stageName(9), "Burned")
+})

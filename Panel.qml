@@ -50,6 +50,15 @@ Panel {
   readonly property var slots: summary ? Model.hourlySlots(summary.forecast, now, 24) : []
   readonly property int slotMax: slots.reduce(function(m, s) { return Math.max(m, s.count) }, 0)
 
+  // ---------- Popup details: SRS breakdown + level progress ----------
+  // Fetched only while the popup is open, at most every 2 minutes, so the
+  // background refresh stays at two requests.
+  property var srsCounts: null
+  property var levelInfo: null
+  property bool detailsLoading: false
+  property real detailsUpdated: 0
+  property int detailsLevel: 0
+
   readonly property string pillText: {
     if (!hasToken) return "—"
     if (!summary) return error !== "" ? "!" : "…"
@@ -82,7 +91,49 @@ Panel {
       if (status === 200) {
         root.user = Model.parseUser(json)
         root.tokenRejected = false
+        if (root.opened) root.refreshDetails(false)
       } else if (failure === "") failure = Model.errorMessage(status)
+      done()
+    })
+  }
+
+  function refreshDetails(force) {
+    var level = root.user ? root.user.level : 0
+    if (!level || root.detailsLoading || !root.hasToken) return
+    var fresh = Date.now() - root.detailsUpdated < 120000
+    if (!force && fresh && level === root.detailsLevel) return
+
+    root.detailsLoading = true
+    var groups = Model.SRS_GROUPS
+    var pending = groups.length + 2
+    var counts = {}
+    var subjects = null
+    var assignments = null
+    var failed = false
+    function done() {
+      if (--pending > 0) return
+      root.detailsLoading = false
+      if (failed) return   // keep the previous numbers visible
+      root.srsCounts = Model.srsBreakdown(counts)
+      root.levelInfo = Model.levelProgress(subjects, assignments, level)
+      root.detailsLevel = level
+      root.detailsUpdated = Date.now()
+    }
+    groups.forEach(function(g) {
+      request("/assignments?srs_stages=" + g.stages, function(status, json) {
+        if (status === 200) counts[g.key] = Model.totalCount(json)
+        else failed = true
+        done()
+      })
+    })
+    request("/subjects?types=kanji&levels=" + level, function(status, json) {
+      if (status === 200) subjects = json
+      else failed = true
+      done()
+    })
+    request("/assignments?subject_types=kanji&levels=" + level, function(status, json) {
+      if (status === 200) assignments = json
+      else failed = true
       done()
     })
   }
@@ -447,6 +498,165 @@ Panel {
             value: root.lessons
             actionText: root.lessons > 0 ? "Start lessons" : ""
             onActivated: root.openUrl(Model.LESSON_URL)
+          }
+        }
+
+        // ---------- Level progress ----------
+        Column {
+          visible: root.levelInfo !== null && !root.showTokenEntry
+          width: parent.width
+          spacing: Style.space(6)
+
+          Item {
+            width: parent.width
+            implicitHeight: levelHeader.implicitHeight
+
+            PanelSectionHeader {
+              id: levelHeader
+              foreground: body.fg
+              fontFamily: body.family
+              text: root.levelInfo ? "LEVEL " + root.levelInfo.level + " KANJI" : ""
+            }
+
+            Text {
+              anchors.right: parent.right
+              anchors.baseline: levelHeader.baseline
+              textFormat: Text.PlainText
+              text: {
+                var l = root.levelInfo
+                if (!l) return ""
+                return l.remaining > 0
+                  ? l.passed + " / " + l.total + " Guru · " + l.remaining + " to level up"
+                  : l.passed + " / " + l.total + " Guru · level-up ready"
+              }
+              color: body.dim
+              font.family: body.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          // Progress bar with a tick at the 90% level-up threshold.
+          Item {
+            width: parent.width
+            height: Style.space(6)
+
+            Rectangle {
+              anchors.fill: parent
+              radius: height / 2
+              color: Qt.rgba(body.fg.r, body.fg.g, body.fg.b, 0.12)
+            }
+            Rectangle {
+              height: parent.height
+              radius: height / 2
+              color: Commons.Color.accent
+              width: root.levelInfo && root.levelInfo.total > 0
+                ? Math.max(height, parent.width * root.levelInfo.passed / root.levelInfo.total)
+                : 0
+              Behavior on width { NumberAnimation { duration: Style.duration(320); easing.type: Easing.OutCubic } }
+            }
+            Rectangle {
+              visible: root.levelInfo && root.levelInfo.total > 0
+              width: Math.max(1, Style.space(2))
+              height: parent.height + Style.space(4)
+              anchors.verticalCenter: parent.verticalCenter
+              x: root.levelInfo && root.levelInfo.total > 0
+                ? parent.width * root.levelInfo.required / root.levelInfo.total - width / 2
+                : 0
+              color: body.fg
+            }
+          }
+
+          // The level's kanji, tinted by SRS state.
+          Flow {
+            width: parent.width
+            spacing: Style.space(4)
+
+            Repeater {
+              model: root.levelInfo ? root.levelInfo.items : []
+              delegate: Rectangle {
+                id: kanjiTile
+                required property var modelData
+                readonly property string tileState: Model.itemState(modelData)
+                width: Style.space(26)
+                height: Style.space(26)
+                radius: Style.space(4)
+                color: tileState === "passed" ? Commons.Color.accent
+                  : tileState === "learning" ? Qt.rgba(body.fg.r, body.fg.g, body.fg.b, 0.14)
+                  : "transparent"
+                border.width: 1
+                border.color: tileState === "passed" ? Commons.Color.accent
+                  : Qt.rgba(body.fg.r, body.fg.g, body.fg.b, tileState === "locked" ? 0.10 : 0.25)
+
+                Text {
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: kanjiTile.modelData.characters
+                  color: kanjiTile.tileState === "passed" ? Commons.Color.background
+                    : kanjiTile.tileState === "locked" ? Qt.rgba(body.fg.r, body.fg.g, body.fg.b, 0.35)
+                    : body.fg
+                  font.pixelSize: Style.font.subtitle
+                }
+
+                MouseArea {
+                  id: kanjiMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                }
+
+                PanelToolTip {
+                  visible: kanjiMouse.containsMouse
+                  text: kanjiTile.modelData.meaning + " · " + Model.stageName(kanjiTile.modelData.stage)
+                }
+              }
+            }
+          }
+        }
+
+        // ---------- SRS breakdown ----------
+        Column {
+          visible: root.srsCounts !== null && !root.showTokenEntry
+          width: parent.width
+          spacing: Style.space(6)
+
+          PanelSectionHeader {
+            foreground: body.fg
+            fontFamily: body.family
+            text: "SRS STAGES"
+          }
+
+          Row {
+            id: srsRow
+            width: parent.width
+            readonly property int n: root.srsCounts ? root.srsCounts.length : 1
+
+            Repeater {
+              model: root.srsCounts || []
+              delegate: Column {
+                required property var modelData
+                width: srsRow.width / srsRow.n
+                spacing: Style.space(1)
+
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  textFormat: Text.PlainText
+                  text: String(modelData.count)
+                  color: body.fg
+                  font.family: body.family
+                  font.pixelSize: Style.font.heading
+                  font.bold: true
+                }
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  textFormat: Text.PlainText
+                  text: modelData.short
+                  color: body.dim
+                  font.family: body.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  font.letterSpacing: 1.2
+                }
+              }
+            }
           }
         }
 

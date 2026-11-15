@@ -3,9 +3,13 @@
 WaniKani at a glance in your [Omarchy](https://omarchy.org) bar.
 
 **In the bar** — `鰐 42 · 5`: reviews waiting now, then lessons available.
-**Click for the popup** — your level, review and lesson counts with one-click *Start reviews* / *Start lessons*, the time until your next reviews, and a 24-hour review forecast.
+**Click for the popup**
+- your level, review and lesson counts with one-click *Start reviews* / *Start lessons*
+- **level progress**: every kanji of your current level, tinted by SRS state, and a bar showing how many must reach Guru to level up (WaniKani's 90% rule)
+- **SRS breakdown**: Apprentice / Guru / Master / Enlightened / Burned
+- the time until your next reviews and a 24-hour review forecast
 
-Data comes straight from the official [WaniKani API v2](https://docs.api.wanikani.com/). Kanibar refreshes on an interval and again just after each full hour, when new reviews unlock.
+Data comes straight from the official [WaniKani API v2](https://docs.api.wanikani.com/). Kanibar refreshes the bar counts on an interval and again just after each full hour, when new reviews unlock. Level progress and SRS stages are fetched only while the popup is open (at most every two minutes), so the background cost stays at two requests.
 
 ## Install
 
