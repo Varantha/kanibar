@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.erfoip.kanibar",
+  "name": "Kanibar",
+  "version": "0.1.0",
+  "author": "erfoip",
+  "license": "MIT",
+  "description": "WaniKani reviews and lessons at a glance, with a detail popup for the review forecast and your level.",
+  "homepage": "https://github.com/erfoip/kanibar",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Kanibar (WaniKani)",
+    "description": "Pending WaniKani reviews and lessons. Click for the 24-hour forecast; middle-click refreshes.",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaults": {
+      "apiToken": "",
+      "refreshMinutes": 10,
+      "showLessons": true,
+      "hideWhenIdle": false,
+      "highlightThreshold": 0
+    },
+    "schema": [
+      {
+        "key": "apiToken",
+        "type": "string",
+        "label": "WaniKani API token",
+        "defaultValue": "",
+        "description": "A read-only personal access token from wanikani.com/settings/personal_access_tokens. Leave empty to read it from ~/.config/kanibar/token instead."
+      },
+      {
+        "key": "refreshMinutes",
+        "type": "integer",
+        "label": "Refresh interval (minutes)",
+        "min": 1,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 10,
+        "description": "Kanibar also refreshes right after each full hour, when new reviews unlock."
+      },
+      {
+        "key": "showLessons",
+        "type": "boolean",
+        "label": "Show lessons on the bar",
+        "defaultValue": true
+      },
+      {
+        "key": "hideWhenIdle",
+        "type": "boolean",
+        "label": "Hide when nothing is due",
+        "defaultValue": false,
+        "description": "Hide the bar pill while there are no reviews or lessons available."
+      },
+      {
+        "key": "highlightThreshold",
+        "type": "integer",
+        "label": "Highlight at reviews",
+        "min": 0,
+        "max": 1000,
+        "step": 10,
+        "defaultValue": 0,
+        "description": "Color the pill with the urgent color once this many reviews are waiting. 0 turns it off."
+      }
+    ]
+  }
+}
