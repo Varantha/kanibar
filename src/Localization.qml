@@ -11,7 +11,7 @@ QtObject {
   readonly property var formatLocale: Qt.locale(Commons.I18n.formatLocale)
 
   property Commons.Translations catalog: Commons.Translations {
-    directory: Qt.resolvedUrl("i18n")
+    directory: Qt.resolvedUrl("../i18n")
   }
 
   function t(key) { return catalog.t(key) }

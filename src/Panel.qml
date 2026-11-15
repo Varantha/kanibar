@@ -15,7 +15,7 @@ import "Model.js" as Model
 // WaniKaniClient, TokenStore and Reminder do the I/O.
 //
 // Safety notes (see Omarchy's plugin guide):
-// - Every text goes through PlainText; test/model.test.js enforces it.
+// - Every text goes through PlainText; test/contracts.test.js enforces it.
 //   Shared sinks used with API text (PanelHero meta, PanelToolTip) render
 //   PlainText internally.
 // - Requests use a fixed HTTPS base, a timeout and a response-size cap;

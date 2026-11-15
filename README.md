@@ -240,22 +240,22 @@ omarchy-shell shell rescanPlugins && omarchy plugin enable io.github.erfoip.kani
 
 node --test kanibar/test/                          # unit and QML contract tests
 omarchy plugin validate "$PWD/kanibar"             # manifest schema
-qmllint -I "$OMARCHY_PATH/shell" kanibar/*.qml
+qmllint -I "$OMARCHY_PATH/shell" kanibar/src/*.qml
 omarchy restart shell                              # QML hot reload is unreliable
 ```
 
 | File | Contents |
 |---|---|
 | `manifest.json` | Plugin contract and settings schema |
-| `Panel.qml` | Entry point: settings, state, when to fetch, popup layout |
-| `WaniKaniClient.qml` | HTTPS requests with timeout and size cap |
-| `TokenStore.qml` | Reads, saves and removes `~/.config/kanibar/token` |
-| `Reminder.qml` | Daily review reminder and its notification |
-| `BarPill.qml`, `SettingsPage.qml`, `TokenEntry.qml`, `CountTiles.qml`, `LevelProgress.qml`, `SrsBreakdown.qml`, `ReviewForecast.qml` | Views: read state, emit intent |
-| `PlainText.qml`, `CaptionText.qml`, `LinkText.qml`, `SectionHeader.qml`, `SettingRow.qml`, `StatTile.qml` | Small building blocks; all text goes through `PlainText` |
-| `Localization.qml` | Catalog lookup and number/time formatting |
-| `Model.js` | Pure parsing, validation and placeholder helpers (no QML), unit-tested in `test/` |
-| `Palette.js` | Colors derived from the bar foreground |
+| `src/Panel.qml` | Entry point: settings, state, when to fetch, popup layout |
+| `src/WaniKaniClient.qml` | HTTPS requests with timeout and size cap |
+| `src/TokenStore.qml` | Reads, saves and removes `~/.config/kanibar/token` |
+| `src/Reminder.qml` | Daily review reminder and its notification |
+| `src/BarPill.qml`, `SettingsPage.qml`, `TokenEntry.qml`, `CountTiles.qml`, `LevelProgress.qml`, `SrsBreakdown.qml`, `ReviewForecast.qml` | Views: read state, emit intent |
+| `src/PlainText.qml`, `CaptionText.qml`, `LinkText.qml`, `SectionHeader.qml`, `SettingRow.qml`, `StatTile.qml` | Small building blocks; all text goes through `PlainText` |
+| `src/Localization.qml` | Catalog lookup and number/time formatting |
+| `src/Model.js` | Pure parsing, validation and placeholder helpers (no QML), unit-tested in `test/` |
+| `src/Palette.js` | Colors derived from the bar foreground |
 | `i18n/` | Translation catalogs (`en.json`) |
 | `test/` | `model.test.js`: Model.js unit tests. `contracts.test.js`: every string exists in `en.json` and is used, every text renders plain text, animations stay within Omarchy's motion rules |
 | `preview.png` | Marketplace preview |
