@@ -884,10 +884,16 @@ Panel {
             }
           }
 
-          // The level's kanji, tinted by SRS state.
-          Flow {
+          // The level's kanji, tinted by SRS state. As many columns as fit
+          // at the minimum tile size, then tiles stretch so every full row
+          // spans the content width exactly (same edges as the bar above).
+          Grid {
+            id: kanjiGrid
             width: parent.width
             spacing: Style.space(4)
+            readonly property real minTile: Style.space(26)
+            columns: Math.max(1, Math.floor((width + spacing) / (minTile + spacing)))
+            readonly property real tile: (width - (columns - 1) * spacing) / columns
 
             Repeater {
               model: root.levelInfo ? root.levelInfo.items : []
@@ -895,8 +901,8 @@ Panel {
                 id: kanjiTile
                 required property var modelData
                 readonly property string tileState: Model.itemState(modelData)
-                width: Style.space(26)
-                height: Style.space(26)
+                width: kanjiGrid.tile
+                height: kanjiGrid.tile
                 radius: Style.space(4)
                 color: tileState === "passed" ? Commons.Color.accent
                   : tileState === "learning" ? Qt.rgba(body.fg.r, body.fg.g, body.fg.b, 0.14)
