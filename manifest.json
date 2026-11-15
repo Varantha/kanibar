@@ -5,7 +5,7 @@
   "version": "0.3.0",
   "author": "erfoip",
   "license": "MIT",
-  "description": "WaniKani reviews and lessons at a glance, with a detail popup for the review forecast and your level.",
+  "description": "WaniKani reviews and lessons in your bar, with a popup for level progress, SRS stages, the review forecast and an optional daily reminder.",
   "homepage": "https://github.com/erfoip/kanibar",
   "kinds": [
     "bar-widget"
@@ -15,7 +15,7 @@
   },
   "barWidget": {
     "displayName": "Kanibar (WaniKani)",
-    "description": "Pending WaniKani reviews and lessons. Click for the 24-hour forecast; middle-click refreshes.",
+    "description": "Pending WaniKani reviews and lessons. Click for level progress, SRS stages and the forecast; middle-click refreshes.",
     "category": "Info",
     "allowMultiple": false,
     "defaults": {
@@ -34,7 +34,7 @@
         "type": "string",
         "label": "WaniKani API token",
         "defaultValue": "",
-        "description": "A read-only personal access token from wanikani.com/settings/personal_access_tokens. Leave empty to read it from ~/.config/kanibar/token instead."
+        "description": "Optional. Normally you paste your token into the popup, which saves it to ~/.config/kanibar/token. A token set here takes precedence over that file."
       },
       {
         "key": "refreshMinutes",

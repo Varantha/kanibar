@@ -301,6 +301,8 @@ Panel {
     function testReminder() { root.sendReminder(root.reviews, root.lessons) }
     // Opens the popup on its settings page.
     function settings() { root.open(); root.view = "settings" }
+    // Opens the popup on the token field, like "Change token".
+    function changeToken() { root.open(); root.view = "main"; root.editingToken = true }
     // Same path the settings page uses, for scripts and dotfiles:
     //   omarchy-shell io.github.erfoip.kanibar setSetting reminderTime '"19:30"'
     // The value is JSON (true, 20, "19:30").
