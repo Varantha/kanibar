@@ -39,9 +39,13 @@ You can also write that file yourself, or set the widget's `apiToken` setting, w
 ```sh
 omarchy-shell shell toggle io.github.erfoip.kanibar     # e.g. bind to a key
 omarchy-shell io.github.erfoip.kanibar testReminder    # preview the reminder notification
+omarchy-shell io.github.erfoip.kanibar settings        # open the popup on its settings page
+omarchy-shell io.github.erfoip.kanibar setSetting reminderTime '"19:30"'   # value is JSON
 ```
 
 ## Settings
+
+Click the gear in the popup header to change everything below without touching config files (Escape or the arrow goes back). Changes are saved to the widget's entry in `~/.config/omarchy/shell.json`.
 
 | Key                  | Default | Description                                                      |
 |----------------------|---------|------------------------------------------------------------------|

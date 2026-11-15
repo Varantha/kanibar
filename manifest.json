@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.erfoip.kanibar",
   "name": "Kanibar",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "erfoip",
   "license": "MIT",
   "description": "WaniKani reviews and lessons at a glance, with a detail popup for the review forecast and your level.",

@@ -47,6 +47,10 @@ Panel {
   property string tokenError: ""
   property string pendingToken: ""
   readonly property bool showTokenEntry: !hasToken || tokenRejected || editingToken
+
+  // "main" or "settings" (gear in the popup header).
+  property string view: "main"
+  readonly property bool showMain: view === "main" && !showTokenEntry
   readonly property int reviews: summary ? summary.reviews : 0
   readonly property int lessons: summary ? summary.lessons : 0
   readonly property bool idle: summary !== null && reviews === 0 && lessons === 0
@@ -196,6 +200,36 @@ Panel {
     xhr.send()
   }
 
+  // ---------- Settings page ----------
+  // Writes one key into this widget's shell.json entry; the shell pushes the
+  // merged settings back, which re-evaluates every setting() binding.
+  function persistSetting(key, value) {
+    if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
+    var entry = { id: root.moduleName }
+    var current = root.settings || {}
+    for (var k in current) if (k !== "id") entry[k] = current[k]
+    entry[key] = value
+    root.settings = entry
+    root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
+  function disconnect() {
+    disconnectProc.running = true
+  }
+
+  function finishDisconnect() {
+    root.fileToken = ""
+    root.summary = null
+    root.user = null
+    root.srsCounts = null
+    root.levelInfo = null
+    root.detailsUpdated = 0
+    root.lastUpdated = 0
+    root.error = ""
+    root.tokenRejected = false
+    root.view = "main"
+  }
+
   // ---------- Daily reminder ----------
   // The handled date lives on disk: the shell rebuilds plugins whenever any
   // plugin's files change, which would otherwise re-send the reminder.
@@ -249,6 +283,7 @@ Panel {
     } else {
       editingToken = false
       tokenError = ""
+      view = "main"
     }
   }
   Component.onCompleted: Qt.callLater(refresh)
@@ -264,9 +299,25 @@ Panel {
     function refresh() { root.refresh() }
     // Sends the reminder now with the current counts (for testing the look).
     function testReminder() { root.sendReminder(root.reviews, root.lessons) }
+    // Opens the popup on its settings page.
+    function settings() { root.open(); root.view = "settings" }
+    // Same path the settings page uses, for scripts and dotfiles:
+    //   omarchy-shell io.github.erfoip.kanibar setSetting reminderTime '"19:30"'
+    // The value is JSON (true, 20, "19:30").
+    function setSetting(key: string, value: string): void {
+      var parsed
+      try { parsed = JSON.parse(value) } catch (e) { parsed = value }
+      root.persistSetting(key, parsed)
+    }
   }
 
   Process { id: notifyProc }
+
+  Process {
+    id: disconnectProc
+    command: ["rm", "-f", root.tokenDir + "/token"]
+    onExited: root.finishDisconnect()
+  }
 
   FileView {
     id: reminderFile
@@ -398,9 +449,12 @@ Panel {
       id: body
       property alias tokenInput: tokenField
       anchors.fill: parent
-      blocked: root.showTokenEntry && tokenField.activeFocus
+      blocked: (root.showTokenEntry && tokenField.activeFocus) || settingsPage.typing
       implicitHeight: column.implicitHeight
-      onCloseRequested: root.close()
+      onCloseRequested: {
+        if (root.view === "settings") root.view = "main"
+        else root.close()
+      }
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
       readonly property color fg: root.bar ? root.bar.foreground : Commons.Color.foreground
@@ -417,8 +471,17 @@ Panel {
         PanelHero {
           foreground: body.fg
           fontFamily: body.family
-          title: "WaniKani"
+          title: root.view === "settings" ? "Settings" : "WaniKani"
+          trailingControl: PanelActionButton {
+            visible: root.hasToken || root.view === "settings"
+            iconText: root.view === "settings" ? "󰁍" : "󰒓"
+            tooltipText: root.view === "settings" ? "Back" : "Settings"
+            foreground: body.fg
+            fontFamily: body.family
+            onClicked: root.view = root.view === "settings" ? "main" : "settings"
+          }
           meta: {
+            if (root.view === "settings") return "KANIBAR"
             if (!root.user) return root.hasToken ? "LOADING…" : "NOT CONNECTED"
             var parts = ["LEVEL " + root.user.level]
             if (root.user.username) parts.push(root.user.username.toUpperCase())
@@ -432,9 +495,166 @@ Panel {
           }
         }
 
+        // ---------- Settings page ----------
+        Column {
+          id: settingsPage
+          visible: root.view === "settings"
+          width: parent.width
+          spacing: Style.space(10)
+
+          readonly property bool typing: reminderTimeField.activeFocus
+            || highlightField.field.activeFocus || refreshField.field.activeFocus || minReviewsField.field.activeFocus
+
+          PanelSectionHeader { foreground: body.fg; fontFamily: body.family; text: "BAR" }
+
+          SettingRow {
+            label: "Show lessons on the bar"
+            ToggleSwitch {
+              checked: root.showLessons
+              foreground: body.fg
+              onToggled: root.persistSetting("showLessons", !root.showLessons)
+            }
+          }
+          SettingRow {
+            label: "Hide when nothing is due"
+            ToggleSwitch {
+              checked: root.hideWhenIdle
+              foreground: body.fg
+              onToggled: root.persistSetting("hideWhenIdle", !root.hideWhenIdle)
+            }
+          }
+          SettingRow {
+            label: "Highlight at (0 = off)"
+            NumberField {
+              id: highlightField
+              value: root.highlightThreshold
+              from: 0; to: 1000; stepSize: 10
+              fieldWidth: Style.space(96)
+              foreground: body.fg
+              fontFamily: body.family
+              onModified: function(v) { root.persistSetting("highlightThreshold", v) }
+            }
+          }
+          SettingRow {
+            label: "Refresh every (minutes)"
+            NumberField {
+              id: refreshField
+              value: root.refreshMinutes
+              from: 1; to: 60; stepSize: 1
+              fieldWidth: Style.space(96)
+              foreground: body.fg
+              fontFamily: body.family
+              onModified: function(v) { root.persistSetting("refreshMinutes", v) }
+            }
+          }
+
+          PanelSeparator { width: parent.width }
+          PanelSectionHeader { foreground: body.fg; fontFamily: body.family; text: "DAILY REMINDER" }
+
+          SettingRow {
+            label: "Remind me if reviews are waiting"
+            ToggleSwitch {
+              checked: root.reminderEnabled
+              foreground: body.fg
+              onToggled: root.persistSetting("reminderEnabled", !root.reminderEnabled)
+            }
+          }
+          SettingRow {
+            label: "At (HH:MM)"
+            opacity: root.reminderEnabled ? 1 : 0.5
+            TextField {
+              id: reminderTimeField
+              width: Style.space(96)
+              text: String(root.setting("reminderTime", "19:00"))
+              placeholderText: "19:00"
+              horizontalAlignment: TextInput.AlignHCenter
+              foreground: body.fg
+              font.family: body.family
+              readonly property bool valid: Model.parseClock(text) >= 0
+              color: valid ? body.fg : Commons.Color.urgent
+              function commit() {
+                if (valid) root.persistSetting("reminderTime", text.trim())
+                else text = String(root.setting("reminderTime", "19:00"))
+              }
+              onAccepted: { commit(); body.forceActiveFocus() }
+              onEditingFinished: commit()
+              Keys.onEscapePressed: function(event) {
+                text = String(root.setting("reminderTime", "19:00"))
+                body.forceActiveFocus()
+                event.accepted = true
+              }
+            }
+          }
+          SettingRow {
+            label: "Only from (reviews)"
+            opacity: root.reminderEnabled ? 1 : 0.5
+            NumberField {
+              id: minReviewsField
+              value: root.reminderMinReviews
+              from: 1; to: 500; stepSize: 1
+              fieldWidth: Style.space(96)
+              foreground: body.fg
+              fontFamily: body.family
+              onModified: function(v) { root.persistSetting("reminderMinReviews", v) }
+            }
+          }
+          Row {
+            spacing: Style.space(12)
+            LinkText {
+              text: "Send test notification"
+              onActivated: root.sendReminder(root.reviews, root.lessons)
+            }
+            Text {
+              visible: root.reminderEnabled && root.reminderLastDate === Model.dateKey(root.now)
+              textFormat: Text.PlainText
+              text: "· already sent today"
+              color: body.dim
+              font.family: body.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          PanelSeparator { width: parent.width }
+          PanelSectionHeader { foreground: body.fg; fontFamily: body.family; text: "ACCOUNT" }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: root.user && root.user.username
+              ? "Connected as " + root.user.username + " (level " + root.user.level + ")."
+              : (root.hasToken ? "Token saved." : "Not connected.")
+            color: body.fg
+            font.family: body.family
+            font.pixelSize: Style.font.body
+          }
+          Row {
+            spacing: Style.space(12)
+            LinkText {
+              text: "Change token"
+              onActivated: { root.view = "main"; root.editingToken = true }
+            }
+            LinkText {
+              visible: root.fileToken !== "" && root.settingsToken === ""
+              text: "Disconnect"
+              onActivated: root.disconnect()
+            }
+          }
+          Text {
+            visible: root.settingsToken !== ""
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: "Using the token from the widget's apiToken setting in shell.json."
+            color: body.dim
+            font.family: body.family
+            font.pixelSize: Style.font.caption
+          }
+        }
+
         // ---------- Token entry (first run, rejected token, or "Change token") ----------
         Column {
-          visible: root.showTokenEntry
+          visible: root.view === "main" && root.showTokenEntry
           width: parent.width
           spacing: Style.space(8)
 
@@ -533,7 +753,7 @@ Panel {
         // ---------- Request error ----------
         Text {
           width: parent.width
-          visible: !root.showTokenEntry && root.error !== ""
+          visible: root.showMain && root.error !== ""
           wrapMode: Text.WordWrap
           textFormat: Text.PlainText
           text: root.error
@@ -544,7 +764,7 @@ Panel {
 
         // ---------- Counts ----------
         Row {
-          visible: root.summary !== null && !root.showTokenEntry
+          visible: root.summary !== null && root.showMain
           width: parent.width
           spacing: Style.space(10)
 
@@ -567,7 +787,7 @@ Panel {
 
         // ---------- Level progress ----------
         Column {
-          visible: root.levelInfo !== null && !root.showTokenEntry
+          visible: root.levelInfo !== null && root.showMain
           width: parent.width
           spacing: Style.space(6)
 
@@ -678,7 +898,7 @@ Panel {
 
         // ---------- SRS breakdown ----------
         Column {
-          visible: root.srsCounts !== null && !root.showTokenEntry
+          visible: root.srsCounts !== null && root.showMain
           width: parent.width
           spacing: Style.space(6)
 
@@ -726,7 +946,7 @@ Panel {
 
         // ---------- Forecast ----------
         Column {
-          visible: root.summary !== null && !root.showTokenEntry
+          visible: root.summary !== null && root.showMain
           width: parent.width
           spacing: Style.space(6)
 
@@ -806,16 +1026,10 @@ Panel {
         }
 
         Item {
-          visible: root.hasToken && !root.showTokenEntry
+          visible: root.hasToken && root.showMain
           width: parent.width
-          implicitHeight: Math.max(changeLink.implicitHeight, updatedText.implicitHeight)
+          implicitHeight: updatedText.implicitHeight
 
-          LinkText {
-            id: changeLink
-            anchors.left: parent.left
-            text: "Change token"
-            onActivated: root.editingToken = true
-          }
 
           Text {
             id: updatedText
@@ -829,6 +1043,37 @@ Panel {
           }
         }
       }
+    }
+  }
+
+  // Label on the left, one control on the right.
+  component SettingRow: Item {
+    id: settingRow
+    property string label: ""
+    default property alias control: controlSlot.data
+    readonly property color fg: root.bar ? root.bar.foreground : Commons.Color.foreground
+    width: parent ? parent.width : implicitWidth
+    implicitHeight: Math.max(rowLabel.implicitHeight, controlSlot.childrenRect.height)
+
+    Text {
+      id: rowLabel
+      anchors.left: parent.left
+      anchors.right: controlSlot.left
+      anchors.rightMargin: Style.space(8)
+      anchors.verticalCenter: parent.verticalCenter
+      textFormat: Text.PlainText
+      text: settingRow.label
+      elide: Text.ElideRight
+      color: settingRow.fg
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.body
+    }
+    Item {
+      id: controlSlot
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      width: childrenRect.width
+      height: childrenRect.height
     }
   }
 
