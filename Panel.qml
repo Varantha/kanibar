@@ -73,6 +73,7 @@ Panel {
   }
   // All reviews cleared: the pill and popup show a check in the accent color.
   readonly property bool reviewsDone: pillParts.done === true
+  readonly property real doneMarkScale: 1.5
 
   function refresh() {
     root.now = Date.now()
@@ -431,7 +432,9 @@ Panel {
         textFormat: Text.PlainText
         color: root.reviewsDone ? Commons.Color.accent : button.foreground
         font.family: button.fontFamily
-        font.pixelSize: Style.font.bodySmall
+        // The icon glyph sits smaller in its em box than digits do, so the
+        // check gets a larger size to match the digits' height.
+        font.pixelSize: root.reviewsDone ? Math.round(Style.font.bodySmall * root.doneMarkScale) : Style.font.bodySmall
         font.weight: Font.DemiBold
 
         // A small pop when the last review is cleared.
