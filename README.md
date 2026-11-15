@@ -34,11 +34,13 @@ kanibar is an Omarchy shell plugin. It shows your pending WaniKani reviews and l
 omarchy plugin add https://github.com/erfoip/kanibar.git --enable
 ```
 
-kanibar appears in the bar. To move it to another section:
+kanibar appears in the bar's `centerEnd` section, right after the clock. To put it somewhere else:
 
 ```sh
-omarchy bar move io.github.erfoip.kanibar --section center
+omarchy bar move io.github.erfoip.kanibar --section right
 ```
+
+Prefer `centerBegin` or `centerEnd` for a spot next to the clock. A widget added to `center` itself pushes the clock off center.
 
 ### Connect your account
 
@@ -74,7 +76,7 @@ kanibar checks the token's format, verifies it with WaniKani, and only then save
 | Middle click | Refresh now                               |
 | Right click  | Open the WaniKani dashboard in the browser |
 
-The counts refresh on an interval (see `refreshMinutes`), and again 30 seconds after every full hour, when WaniKani unlocks new reviews.
+The counts refresh in the background on an interval (see `refreshMinutes`), and again 30 seconds after every full hour, when WaniKani unlocks new reviews. You can turn background refresh off.
 
 ### The popup
 
@@ -91,7 +93,7 @@ The counts refresh on an interval (see `refreshMinutes`), and again 30 seconds a
   Hover a kanji for its meaning and exact stage (e.g. *Apprentice 3*). The bar above fills as kanji reach Guru. The tick marks WaniKani's level-up threshold: **90% of the level's kanji at Guru**. The header shows how many are still needed.
 - **SRS stages:** how many items you have in each stage group across your whole account.
 - **Next 24 hours:** reviews unlocking each hour (hover a bar for the exact count).
-- **Footer:** when the data was last updated.
+- **Footer:** when the data was last updated, in your Omarchy language's time format.
 
 Level progress and SRS stages are loaded only while the popup is open, and at most every two minutes. The background refresh stays small (see [API usage](#privacy-and-api-usage)).
 
@@ -119,9 +121,11 @@ Hides the pill while there are no reviews and no lessons (instead of showing the
 *Integer 0–1000, step 10, default `0` (off).*
 Once at least this many reviews are waiting, the pill switches to your theme's **urgent** color as a nudge before the pile gets big. `0` turns the highlight off.
 
-#### `refreshMinutes`: Refresh every (minutes)
-*Integer 1–60, default `10`.*
-How often the bar counts are fetched in the background. On top of this, kanibar always refreshes just after each full hour (when new reviews unlock), whenever you open the popup, and when you middle-click the pill. The default suits most people, since reviews only unlock on the hour.
+#### `refreshMinutes`: Refresh every (minutes, 0 = off)
+*Integer 0–60, default `10`.*
+How often the bar counts are fetched in the background. While it's on, kanibar also refreshes just after each full hour, when new reviews unlock. The default suits most people, since reviews only unlock on the hour.
+
+`0` turns background refresh off completely: no interval and no hourly refresh. The counts then update only when you open the popup or middle-click the pill. The daily reminder, if enabled, still checks at its time.
 
 ### Daily reminder
 
@@ -190,12 +194,25 @@ Everything goes through `omarchy-shell`, so you can bind these to keys in your H
 
 All colors come from your current Omarchy theme: the accent color for passed kanji, progress and forecast bars; the foreground color for text and outlines; the urgent color for errors and the highlight. Switching themes updates kanibar instantly, no restart needed.
 
+Animations follow Omarchy's motion rules, and `omarchy toggle animations` turns them off for kanibar as well.
+
+## Languages
+
+kanibar follows the language picked under **Setup > Language**, live, without a restart. Numbers and times use that language's format. Right-to-left languages get a mirrored layout.
+
+Only English ships so far. Translations are welcome:
+
+1. Copy `i18n/en.json` to `i18n/<code>.json`, using an Omarchy language code such as `de`, `ja` or `pt-BR`. The codes are listed in `$OMARCHY_PATH/default/i18n/locales.json`.
+2. Translate the values, keeping the `%1`/`%2` placeholders. Entries with `one`/`other` are plurals: give the forms your language needs, e.g. Japanese uses only `other`.
+3. Leave out anything you don't want to translate. Missing strings fall back to English.
+
 ## Privacy and API usage
 
 - **Read-only.** kanibar only reads from the API. It can't start lessons, submit reviews or change settings on your account.
 - **Token storage.** The token is saved to `~/.config/kanibar/token` with mode 600, written through stdin so it never appears in the process list. It's sent only to `api.wanikani.com`.
+- **Defensive by default.** Every request goes to the fixed HTTPS address `api.wanikani.com`, gives up after 15 seconds, and is dropped if the response exceeds 2 MB. Data from the API is validated before use: counts are kept within sane ranges, lists are capped, and text such as usernames and kanji meanings is length-limited and always shown as plain text, never interpreted as markup.
 - **Requests.**
-  - **Background refresh:** 2 requests (`/summary`, `/user`).
+  - **Background refresh:** 2 requests (`/summary`, `/user`) every `refreshMinutes` and after each full hour. You can turn this off.
   - **Popup details:** 7 more (5 stage counts plus 2 for the current level), only while the popup is open and at most every two minutes.
   - **Daily reminder:** 1 request.
 
@@ -231,7 +248,10 @@ omarchy restart shell                              # QML hot reload is unreliabl
 |---|---|
 | `manifest.json` | Plugin contract and settings schema |
 | `Panel.qml` | Bar pill, popup, settings page, API calls, reminder |
-| `Model.js` | Pure parsing and formatting helpers (no QML), unit-tested in `test/` |
+| `Model.js` | Pure parsing, validation and placeholder helpers (no QML), unit-tested in `test/` |
+| `i18n/` | Translation catalogs (`en.json`) |
+| `test/` | Unit tests, plus checks that every string exists in `en.json`, every `Text` renders plain text, and animations stay within Omarchy's motion rules |
+| `preview.png` | Marketplace preview |
 | `assets/` | README screenshots |
 
 ## License

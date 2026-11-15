@@ -8,19 +8,34 @@ import "Model.js" as Model
 
 // Kanibar: WaniKani reviews and lessons on the Omarchy bar.
 // The pill shows reviews (and lessons) available now; clicking opens a popup
-// with level, next-review time and the 24-hour forecast. Data comes from the
-// official WaniKani API v2 (GET /summary and GET /user).
+// with level progress, SRS stages and the 24-hour forecast. Data comes from
+// the official WaniKani API v2.
+//
+// Safety notes (see Omarchy's plugin guide):
+// - Every Text here is Text.PlainText; test/model.test.js enforces it.
+//   Shared sinks used with API text (PanelHero meta, PanelToolTip) render
+//   PlainText internally.
+// - Requests use a fixed HTTPS base, a timeout and a response-size cap;
+//   Model.js clamps and length-limits everything it parses.
+// - All user-facing strings come from i18n/<language>.json.
 Panel {
   id: root
   moduleName: "io.github.erfoip.kanibar"
   ipcTarget: "io.github.erfoip.kanibar"
   manageIpc: false
 
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+
   // ---------- Settings ----------
   readonly property string settingsToken: String(setting("apiToken", "") || "").trim()
   property string fileToken: ""
   readonly property string apiToken: settingsToken !== "" ? settingsToken : fileToken
-  readonly property int refreshMinutes: Math.max(1, parseInt(setting("refreshMinutes", 10), 10) || 10)
+  // 0 turns background refresh off (popup open and middle-click still refresh).
+  readonly property int refreshMinutes: {
+    var n = parseInt(setting("refreshMinutes", 10), 10)
+    return isNaN(n) ? 10 : Math.max(0, Math.min(60, n))
+  }
+  readonly property bool autoRefresh: refreshMinutes > 0
   readonly property bool showLessons: setting("showLessons", true) === true
   readonly property bool hideWhenIdle: setting("hideWhenIdle", false) === true
   readonly property int highlightThreshold: Math.max(0, parseInt(setting("highlightThreshold", 0), 10) || 0)
@@ -32,7 +47,7 @@ Panel {
   // summary/user are kept on failure so stale numbers stay visible.
   property var summary: null
   property var user: null
-  property string error: ""
+  property var errorInfo: null          // { key, arg } from Model.errorInfo
   property bool loading: false
   property real lastUpdated: 0
   property real now: Date.now()
@@ -44,7 +59,7 @@ Panel {
   property bool tokenRejected: false   // last refresh got a 401
   property bool editingToken: false    // "Change token" clicked
   property bool tokenBusy: false
-  property string tokenError: ""
+  property var tokenErrorInfo: null    // { key, arg }
   property string pendingToken: ""
   readonly property bool showTokenEntry: !hasToken || tokenRejected || editingToken
 
@@ -68,32 +83,62 @@ Panel {
 
   readonly property var pillParts: {
     if (!hasToken) return { main: "—", extra: "", done: false }
-    if (!summary) return { main: error !== "" ? "!" : "…", extra: "", done: false }
-    return Model.barParts(summary, showLessons)
+    if (!summary) return { main: errorInfo !== null ? "!" : "…", extra: "", done: false }
+    return Model.barParts(summary, showLessons, num)
   }
   // All reviews cleared: the pill and popup show a check in the accent color.
   readonly property bool reviewsDone: pillParts.done === true
   readonly property real doneMarkScale: 1.5
 
+  // ---------- Localization helpers ----------
+  // Called from bindings, so a language switch re-renders them.
+  readonly property var formatLocale: Qt.locale(Commons.I18n.formatLocale)
+
+  function tr(key) { return strings.t(key) }
+  function num(n) { return Commons.I18n.formatNumber(n) }
+  function timeText(ms) { return new Date(ms).toLocaleTimeString(root.formatLocale, Locale.ShortFormat) }
+  function hourText(ms) { return root.formatLocale.toString(new Date(ms), "HH") }
+
+  function durationText(target) {
+    var d = Model.duration(target, root.now)
+    switch (d.kind) {
+    case "now": return tr("time.now")
+    case "minutes": return Model.fill(tr("time.minutes"), num(d.minutes))
+    case "hours": return Model.fill(tr("time.hours"), num(d.hours))
+    case "hoursMinutes": return Model.fill(tr("time.hoursMinutes"), num(d.hours), num(d.minutes))
+    case "days": return Model.fill(tr("time.days"), num(d.days))
+    case "daysHours": return Model.fill(tr("time.daysHours"), num(d.days), num(d.hours))
+    }
+    return ""
+  }
+
+  function infoText(info) { return info ? Model.fill(tr(info.key), info.arg) : "" }
+
+  function stageText(stage) {
+    var info = Model.stageInfo(stage)
+    return Model.fill(tr(info.key), info.arg !== "" ? num(Number(info.arg)) : "")
+  }
+
+  // ---------- Data ----------
   function refresh() {
     root.now = Date.now()
     if (!hasToken) {
-      root.error = ""
+      root.errorInfo = null
       return
     }
     if (root.loading) return
     root.loading = true
     var pending = 2
-    var failure = ""
+    var failure = null
     function done() {
       if (--pending > 0) return
       root.loading = false
-      root.error = failure
-      if (failure === "") root.lastUpdated = Date.now()
+      root.errorInfo = failure
+      if (failure === null) root.lastUpdated = Date.now()
     }
     request("/summary", function(status, json) {
       if (status === 200) root.summary = Model.parseSummary(json, Date.now())
-      else failure = Model.errorMessage(status)
+      else failure = Model.errorInfo(status)
       if (status === 401) root.tokenRejected = true
       done()
     })
@@ -102,7 +147,7 @@ Panel {
         root.user = Model.parseUser(json)
         root.tokenRejected = false
         if (root.opened) root.refreshDetails(false)
-      } else if (failure === "") failure = Model.errorMessage(status)
+      } else if (failure === null) failure = Model.errorInfo(status)
       done()
     })
   }
@@ -155,15 +200,15 @@ Panel {
     if (root.tokenBusy) return
     var problem = Model.tokenProblem(token)
     if (problem !== "") {
-      root.tokenError = problem
+      root.tokenErrorInfo = { key: problem, arg: "" }
       return
     }
     root.tokenBusy = true
-    root.tokenError = ""
+    root.tokenErrorInfo = null
     request("/user", function(status, json) {
       if (status !== 200) {
         root.tokenBusy = false
-        root.tokenError = status === 401 ? "WaniKani doesn't recognize this token." : Model.errorMessage(status)
+        root.tokenErrorInfo = status === 401 ? { key: "token.unknown", arg: "" } : Model.errorInfo(status)
         return
       }
       root.user = Model.parseUser(json)
@@ -175,7 +220,7 @@ Panel {
   function finishTokenSave(ok) {
     root.tokenBusy = false
     if (!ok) {
-      root.tokenError = "Couldn't write " + root.tokenDir + "/token."
+      root.tokenErrorInfo = { key: "token.writeFailed", arg: root.tokenDir + "/token" }
       root.pendingToken = ""
       return
     }
@@ -184,23 +229,56 @@ Panel {
     root.pendingToken = ""
     root.tokenRejected = false
     root.editingToken = false
-    root.error = ""
+    root.errorInfo = null
     root.refresh()
   }
 
-  // XMLHttpRequest keeps the token out of process argv (unlike curl).
+  // GET against the fixed API base. XMLHttpRequest keeps the token out of
+  // process argv (unlike curl). Fails closed on timeout, oversized or
+  // non-JSON responses. The callback runs exactly once.
   function request(path, callback, tokenOverride) {
+    var finished = false
     var xhr = new XMLHttpRequest()
+    var timer = timeoutTimer.createObject(root, { interval: Model.REQUEST_TIMEOUT_MS })
+
+    function finish(status, json) {
+      if (finished) return
+      finished = true
+      if (timer) { timer.stop(); timer.destroy() }
+      callback(status, json)
+    }
+
+    // finish() before abort(): abort() re-enters onreadystatechange
+    // synchronously, and that pass must not report its own result.
+    timer.triggered.connect(function() {
+      finish(Model.STATUS_OFFLINE, null)
+      xhr.abort()
+    })
     xhr.onreadystatechange = function() {
+      if (finished) return
+      if (xhr.readyState >= XMLHttpRequest.LOADING && xhr.responseText.length > Model.MAX_RESPONSE_CHARS) {
+        finish(Model.STATUS_TOO_LARGE, null)
+        xhr.abort()
+        return
+      }
       if (xhr.readyState !== XMLHttpRequest.DONE) return
       var json = null
       try { json = JSON.parse(xhr.responseText) } catch (e) {}
-      callback(xhr.status, json)
+      if (json === null || typeof json !== "object") json = null
+      var status = xhr.status
+      if (status === 200 && json === null) status = Model.STATUS_OFFLINE
+      finish(status, json)
     }
     xhr.open("GET", Model.API_BASE + path)
     xhr.setRequestHeader("Authorization", "Bearer " + (tokenOverride || root.apiToken))
     xhr.setRequestHeader("Wanikani-Revision", Model.API_REVISION)
     xhr.send()
+    timer.start()
+  }
+
+  Component {
+    id: timeoutTimer
+    Timer { repeat: false }
   }
 
   // ---------- Settings page ----------
@@ -228,7 +306,7 @@ Panel {
     root.levelInfo = null
     root.detailsUpdated = 0
     root.lastUpdated = 0
-    root.error = ""
+    root.errorInfo = null
     root.tokenRejected = false
     root.view = "main"
   }
@@ -261,15 +339,21 @@ Panel {
     reminderFile.setText(root.reminderLastDate + "\n")
   }
 
+  // Only numbers and the plugin's own catalog strings reach the notification.
   function sendReminder(reviews, lessons) {
-    var t = Model.reminderText(reviews, lessons)
+    var headline = Model.fill(strings.tn("reminder.headline", reviews), num(reviews))
+    var body = lessons > 0
+      ? Model.fill(strings.tn("reminder.bodyLessons", lessons), num(lessons))
+      : tr("reminder.body")
+    // omarchy-notification-send parses leading dashes as options.
+    if (headline.charAt(0) === "-" || body.charAt(0) === "-") return
     notifyProc.command = [
       "omarchy-notification-send",
       "--app-name", "Kanibar",
       "-g", "鰐",
       "-u", "normal",
-      t.headline, t.body,
-      "--action", "Start reviews", "omarchy-launch-browser", Model.REVIEW_URL
+      headline, body,
+      "--action", tr("reminder.action"), "omarchy-launch-browser", Model.REVIEW_URL
     ]
     notifyProc.running = true
   }
@@ -285,7 +369,7 @@ Panel {
       refresh()
     } else {
       editingToken = false
-      tokenError = ""
+      tokenErrorInfo = null
       view = "main"
     }
   }
@@ -328,7 +412,7 @@ Panel {
     id: reminderFile
     path: Quickshell.env("HOME") + "/.local/state/omarchy/kanibar-reminder"
     printErrors: false
-    onLoaded: { root.reminderLastDate = String(text() || "").trim(); root.reminderStateLoaded = true }
+    onLoaded: { root.reminderLastDate = String(text() || "").trim().slice(0, 10); root.reminderStateLoaded = true }
     onLoadFailed: { root.reminderLastDate = ""; root.reminderStateLoaded = true }
   }
 
@@ -356,13 +440,14 @@ Panel {
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.fileToken = String(text() || "").trim()
+    onLoaded: root.fileToken = String(text() || "").trim().slice(0, 64)
     onLoadFailed: root.fileToken = ""
   }
 
+  // Background refresh (disclosed in the README; refreshMinutes 0 = off).
   Timer {
-    interval: root.refreshMinutes * 60000
-    running: root.hasToken
+    interval: Math.max(1, root.refreshMinutes) * 60000
+    running: root.hasToken && root.autoRefresh
     repeat: true
     onTriggered: root.refresh()
   }
@@ -370,7 +455,7 @@ Panel {
   // New reviews unlock on the hour; refresh just after it.
   Timer {
     id: hourTimer
-    running: root.hasToken
+    running: root.hasToken && root.autoRefresh
     interval: Model.msUntilNextHour(Date.now())
     onTriggered: {
       root.refresh()
@@ -437,11 +522,18 @@ Panel {
         font.pixelSize: root.reviewsDone ? Math.round(Style.font.bodySmall * root.doneMarkScale) : Style.font.bodySmall
         font.weight: Font.DemiBold
 
-        // A small pop when the last review is cleared.
+        // A small pop confirming the last review was cleared: 160ms out,
+        // 120ms back, no overshoot. Style.duration() is 0 with animations off.
         SequentialAnimation {
           id: donePop
-          NumberAnimation { target: pillMain; property: "scale"; to: 1.5; duration: Style.duration(140); easing.type: Easing.OutQuad }
-          NumberAnimation { target: pillMain; property: "scale"; to: 1.0; duration: Style.duration(320); easing.type: Easing.OutBack }
+          NumberAnimation {
+            target: pillMain; property: "scale"; to: 1.15
+            duration: Style.duration(160); easing.type: Easing.Bezier; easing.bezierCurve: Style.easeOut
+          }
+          NumberAnimation {
+            target: pillMain; property: "scale"; to: 1.0
+            duration: Style.duration(120); easing.type: Easing.OutCubic
+          }
         }
         Connections {
           target: root
@@ -500,21 +592,23 @@ Panel {
         PanelHero {
           foreground: body.fg
           fontFamily: body.family
-          title: root.view === "settings" ? "Settings" : "WaniKani"
+          title: root.view === "settings" ? root.tr("hero.settingsTitle") : root.tr("hero.title")
           trailingControl: PanelActionButton {
             visible: root.hasToken || root.view === "settings"
-            iconText: root.view === "settings" ? "󰁍" : "󰒓"
-            tooltipText: root.view === "settings" ? "Back" : "Settings"
+            // Back points the reading direction's way: left, or right in RTL.
+            iconText: root.view === "settings" ? (Commons.I18n.rightToLeft ? "󰁔" : "󰁍") : "󰒓"
+            tooltipText: root.view === "settings" ? root.tr("action.back") : root.tr("action.settings")
             foreground: body.fg
             fontFamily: body.family
             onClicked: root.view = root.view === "settings" ? "main" : "settings"
           }
+          // PanelHero renders meta as PlainText (and upper-cases it).
           meta: {
-            if (root.view === "settings") return "KANIBAR"
-            if (!root.user) return root.hasToken ? "LOADING…" : "NOT CONNECTED"
-            var parts = ["LEVEL " + root.user.level]
-            if (root.user.username) parts.push(root.user.username.toUpperCase())
-            return parts.join(" · ")
+            if (root.view === "settings") return root.tr("hero.settingsMeta")
+            if (!root.user) return root.hasToken ? root.tr("hero.loading") : root.tr("hero.notConnected")
+            return root.user.username
+              ? Model.fill(root.tr("hero.levelUser"), root.num(root.user.level), root.user.username)
+              : Model.fill(root.tr("hero.level"), root.num(root.user.level))
           }
           iconComponent: Text {
             text: "鰐"
@@ -534,10 +628,10 @@ Panel {
           readonly property bool typing: reminderTimeField.activeFocus
             || highlightField.field.activeFocus || refreshField.field.activeFocus || minReviewsField.field.activeFocus
 
-          PanelSectionHeader { foreground: body.fg; fontFamily: body.family; text: "BAR" }
+          SectionHeader { text: root.tr("settings.bar") }
 
           SettingRow {
-            label: "Show lessons on the bar"
+            label: root.tr("settings.showLessons")
             ToggleSwitch {
               checked: root.showLessons
               foreground: body.fg
@@ -545,7 +639,7 @@ Panel {
             }
           }
           SettingRow {
-            label: "Hide when nothing is due"
+            label: root.tr("settings.hideWhenIdle")
             ToggleSwitch {
               checked: root.hideWhenIdle
               foreground: body.fg
@@ -553,7 +647,7 @@ Panel {
             }
           }
           SettingRow {
-            label: "Highlight at (0 = off)"
+            label: root.tr("settings.highlight")
             NumberField {
               id: highlightField
               value: root.highlightThreshold
@@ -565,11 +659,11 @@ Panel {
             }
           }
           SettingRow {
-            label: "Refresh every (minutes)"
+            label: root.tr("settings.refresh")
             NumberField {
               id: refreshField
               value: root.refreshMinutes
-              from: 1; to: 60; stepSize: 1
+              from: 0; to: 60; stepSize: 1
               fieldWidth: Style.space(96)
               foreground: body.fg
               fontFamily: body.family
@@ -578,10 +672,10 @@ Panel {
           }
 
           PanelSeparator { width: parent.width }
-          PanelSectionHeader { foreground: body.fg; fontFamily: body.family; text: "DAILY REMINDER" }
+          SectionHeader { text: root.tr("settings.reminder") }
 
           SettingRow {
-            label: "Remind me if reviews are waiting"
+            label: root.tr("settings.reminderEnabled")
             ToggleSwitch {
               checked: root.reminderEnabled
               foreground: body.fg
@@ -589,13 +683,14 @@ Panel {
             }
           }
           SettingRow {
-            label: "At (HH:MM)"
+            label: root.tr("settings.reminderTime")
             opacity: root.reminderEnabled ? 1 : 0.5
             TextField {
               id: reminderTimeField
               width: Style.space(96)
-              text: String(root.setting("reminderTime", "19:00"))
+              text: String(root.setting("reminderTime", "19:00")).slice(0, 5)
               placeholderText: "19:00"
+              maximumLength: 5
               horizontalAlignment: TextInput.AlignHCenter
               foreground: body.fg
               font.family: body.family
@@ -603,19 +698,19 @@ Panel {
               color: valid ? body.fg : Commons.Color.urgent
               function commit() {
                 if (valid) root.persistSetting("reminderTime", text.trim())
-                else text = String(root.setting("reminderTime", "19:00"))
+                else text = String(root.setting("reminderTime", "19:00")).slice(0, 5)
               }
               onAccepted: { commit(); body.forceActiveFocus() }
               onEditingFinished: commit()
               Keys.onEscapePressed: function(event) {
-                text = String(root.setting("reminderTime", "19:00"))
+                text = String(root.setting("reminderTime", "19:00")).slice(0, 5)
                 body.forceActiveFocus()
                 event.accepted = true
               }
             }
           }
           SettingRow {
-            label: "Only from (reviews)"
+            label: root.tr("settings.reminderMin")
             opacity: root.reminderEnabled ? 1 : 0.5
             NumberField {
               id: minReviewsField
@@ -630,13 +725,13 @@ Panel {
           Row {
             spacing: Style.space(12)
             LinkText {
-              text: "Send test notification"
+              text: root.tr("settings.testNotification")
               onActivated: root.sendReminder(root.reviews, root.lessons)
             }
             Text {
               visible: root.reminderEnabled && root.reminderLastDate === Model.dateKey(root.now)
               textFormat: Text.PlainText
-              text: "· already sent today"
+              text: root.tr("settings.sentToday")
               color: body.dim
               font.family: body.family
               font.pixelSize: Style.font.caption
@@ -644,15 +739,15 @@ Panel {
           }
 
           PanelSeparator { width: parent.width }
-          PanelSectionHeader { foreground: body.fg; fontFamily: body.family; text: "ACCOUNT" }
+          SectionHeader { text: root.tr("settings.account") }
 
           Text {
             width: parent.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
             text: root.user && root.user.username
-              ? "Connected as " + root.user.username + " (level " + root.user.level + ")."
-              : (root.hasToken ? "Token saved." : "Not connected.")
+              ? Model.fill(root.tr("settings.connectedAs"), root.user.username, root.num(root.user.level))
+              : (root.hasToken ? root.tr("settings.tokenSaved") : root.tr("settings.notConnected"))
             color: body.fg
             font.family: body.family
             font.pixelSize: Style.font.body
@@ -660,12 +755,12 @@ Panel {
           Row {
             spacing: Style.space(12)
             LinkText {
-              text: "Change token"
+              text: root.tr("settings.changeToken")
               onActivated: { root.view = "main"; root.editingToken = true }
             }
             LinkText {
               visible: root.fileToken !== "" && root.settingsToken === ""
-              text: "Disconnect"
+              text: root.tr("settings.disconnect")
               onActivated: root.disconnect()
             }
           }
@@ -674,7 +769,7 @@ Panel {
             width: parent.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
-            text: "Using the token from the widget's apiToken setting in shell.json."
+            text: root.tr("settings.usingApiToken")
             color: body.dim
             font.family: body.family
             font.pixelSize: Style.font.caption
@@ -691,9 +786,7 @@ Panel {
             width: parent.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
-            text: root.tokenRejected && !root.editingToken
-              ? "WaniKani rejected the saved token. Paste a new one:"
-              : "Paste a read-only WaniKani API token to connect:"
+            text: root.tokenRejected && !root.editingToken ? root.tr("token.rejected") : root.tr("token.prompt")
             color: body.fg
             font.family: body.family
             font.pixelSize: Style.font.body
@@ -707,11 +800,12 @@ Panel {
               id: tokenField
               width: parent.width - connectButton.width - parent.spacing
               password: true
+              maximumLength: 64
               enabled: !root.tokenBusy
               placeholderText: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
               foreground: body.fg
               font.family: body.family
-              onTextChanged: root.tokenError = ""
+              onTextChanged: root.tokenErrorInfo = null
               onAccepted: root.submitToken(text)
               Keys.onEscapePressed: function(event) {
                 if (root.editingToken) root.editingToken = false
@@ -722,7 +816,7 @@ Panel {
 
             Button {
               id: connectButton
-              text: root.tokenBusy ? "Checking…" : "Connect"
+              text: root.tokenBusy ? root.tr("token.checking") : root.tr("token.connect")
               bordered: true
               enabled: !root.tokenBusy && tokenField.text.trim() !== ""
               foreground: body.fg
@@ -734,10 +828,10 @@ Panel {
 
           Text {
             width: parent.width
-            visible: root.tokenError !== ""
+            visible: root.tokenErrorInfo !== null
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
-            text: root.tokenError
+            text: root.infoText(root.tokenErrorInfo)
             color: Commons.Color.urgent
             font.family: body.family
             font.pixelSize: Style.font.bodySmall
@@ -748,7 +842,7 @@ Panel {
             visible: root.settingsToken !== ""
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
-            text: "A token is set in the widget settings and takes precedence. Clear it there to use this one."
+            text: root.tr("token.settingsOverride")
             color: body.dim
             font.family: body.family
             font.pixelSize: Style.font.caption
@@ -758,12 +852,12 @@ Panel {
             spacing: Style.space(12)
 
             LinkText {
-              text: "Get a token ↗"
+              text: root.tr("token.get")
               onActivated: root.openUrl(Model.TOKEN_URL)
             }
             LinkText {
               visible: root.editingToken
-              text: "Cancel"
+              text: root.tr("token.cancel")
               onActivated: root.editingToken = false
             }
           }
@@ -772,7 +866,7 @@ Panel {
             width: parent.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
-            text: "Saved to " + root.tokenDir.replace(Quickshell.env("HOME"), "~") + "/token (only readable by you)."
+            text: Model.fill(root.tr("token.savedTo"), root.tokenDir.replace(Quickshell.env("HOME"), "~") + "/token")
             color: body.dim
             font.family: body.family
             font.pixelSize: Style.font.caption
@@ -782,10 +876,10 @@ Panel {
         // ---------- Request error ----------
         Text {
           width: parent.width
-          visible: root.showMain && root.error !== ""
+          visible: root.showMain && root.errorInfo !== null
           wrapMode: Text.WordWrap
           textFormat: Text.PlainText
-          text: root.error
+          text: root.infoText(root.errorInfo)
           color: Commons.Color.urgent
           font.family: body.family
           font.pixelSize: Style.font.body
@@ -799,22 +893,22 @@ Panel {
 
           StatTile {
             width: (parent.width - parent.spacing) / 2
-            label: root.reviewsDone ? "ALL DONE" : "REVIEWS"
+            label: root.reviewsDone ? root.tr("tile.allDone") : root.tr("tile.reviews")
             value: root.reviews
             valueText: root.reviewsDone ? Model.DONE_MARK : ""
             celebrate: root.reviewsDone
             note: root.reviewsDone && root.summary && root.summary.nextReviewsAt !== null
-              ? "Next " + Model.relativeTime(root.summary.nextReviewsAt, root.now)
+              ? Model.fill(root.tr("tile.next"), root.durationText(root.summary.nextReviewsAt))
               : ""
-            actionText: root.reviews > 0 ? "Start reviews" : ""
+            actionText: root.reviews > 0 ? root.tr("tile.startReviews") : ""
             onActivated: root.openUrl(Model.REVIEW_URL)
           }
 
           StatTile {
             width: (parent.width - parent.spacing) / 2
-            label: "LESSONS"
+            label: root.tr("tile.lessons")
             value: root.lessons
-            actionText: root.lessons > 0 ? "Start lessons" : ""
+            actionText: root.lessons > 0 ? root.tr("tile.startLessons") : ""
             onActivated: root.openUrl(Model.LESSON_URL)
           }
         }
@@ -829,11 +923,10 @@ Panel {
             width: parent.width
             implicitHeight: levelHeader.implicitHeight
 
-            PanelSectionHeader {
+            SectionHeader {
               id: levelHeader
-              foreground: body.fg
-              fontFamily: body.family
-              text: root.levelInfo ? "LEVEL " + root.levelInfo.level + " KANJI" : ""
+              anchors.left: parent.left
+              text: root.levelInfo ? Model.fill(root.tr("level.header"), root.num(root.levelInfo.level)) : ""
             }
 
             Text {
@@ -844,8 +937,8 @@ Panel {
                 var l = root.levelInfo
                 if (!l) return ""
                 return l.remaining > 0
-                  ? l.passed + " / " + l.total + " Guru · " + l.remaining + " to level up"
-                  : l.passed + " / " + l.total + " Guru · level-up ready"
+                  ? Model.fill(root.tr("level.progress"), root.num(l.passed), root.num(l.total), root.num(l.remaining))
+                  : Model.fill(root.tr("level.ready"), root.num(l.passed), root.num(l.total))
               }
               color: body.dim
               font.family: body.family
@@ -855,6 +948,7 @@ Panel {
 
           // Progress bar with a tick at the 90% level-up threshold.
           Item {
+            id: progressTrack
             width: parent.width
             height: Style.space(6)
 
@@ -864,22 +958,26 @@ Panel {
               color: Qt.rgba(body.fg.r, body.fg.g, body.fg.b, 0.12)
             }
             Rectangle {
+              // Anchored, so it fills from the right under RTL mirroring.
+              anchors.left: parent.left
               height: parent.height
               radius: height / 2
               color: Commons.Color.accent
               width: root.levelInfo && root.levelInfo.total > 0
                 ? Math.max(height, parent.width * root.levelInfo.passed / root.levelInfo.total)
                 : 0
-              Behavior on width { NumberAnimation { duration: Style.duration(320); easing.type: Easing.OutCubic } }
+              Behavior on width { NumberAnimation { duration: Style.duration(240); easing.type: Easing.OutCubic } }
             }
             Rectangle {
+              readonly property real offset: root.levelInfo && root.levelInfo.total > 0
+                ? progressTrack.width * root.levelInfo.required / root.levelInfo.total - width / 2
+                : 0
               visible: root.levelInfo && root.levelInfo.total > 0
               width: Math.max(1, Style.space(2))
               height: parent.height + Style.space(4)
               anchors.verticalCenter: parent.verticalCenter
-              x: root.levelInfo && root.levelInfo.total > 0
-                ? parent.width * root.levelInfo.required / root.levelInfo.total - width / 2
-                : 0
+              // Explicit x isn't mirrored automatically.
+              x: LayoutMirroring.enabled ? progressTrack.width - offset - width : offset
               color: body.fg
             }
           }
@@ -927,9 +1025,12 @@ Panel {
                   hoverEnabled: true
                 }
 
+                // PanelToolTip renders PlainText; meaning comes from the API.
                 PanelToolTip {
                   visible: kanjiMouse.containsMouse
-                  text: kanjiTile.modelData.meaning + " · " + Model.stageName(kanjiTile.modelData.stage)
+                  text: kanjiTile.modelData.meaning
+                    ? Model.fill(root.tr("stage.tooltip"), kanjiTile.modelData.meaning, root.stageText(kanjiTile.modelData.stage))
+                    : root.stageText(kanjiTile.modelData.stage)
                 }
               }
             }
@@ -942,11 +1043,7 @@ Panel {
           width: parent.width
           spacing: Style.space(6)
 
-          PanelSectionHeader {
-            foreground: body.fg
-            fontFamily: body.family
-            text: "SRS STAGES"
-          }
+          SectionHeader { text: root.tr("srs.header") }
 
           Row {
             id: srsRow
@@ -963,7 +1060,7 @@ Panel {
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   textFormat: Text.PlainText
-                  text: String(modelData.count)
+                  text: root.num(modelData.count)
                   color: body.fg
                   font.family: body.family
                   font.pixelSize: Style.font.heading
@@ -972,12 +1069,13 @@ Panel {
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   textFormat: Text.PlainText
-                  text: modelData.short
+                  text: root.tr("srs." + modelData.key + ".short")
                   color: body.dim
                   font.family: body.family
                   font.pixelSize: Style.font.caption
                   font.bold: true
                   font.letterSpacing: 1.2
+                  font.capitalization: Font.AllUppercase
                 }
               }
             }
@@ -990,10 +1088,9 @@ Panel {
           width: parent.width
           spacing: Style.space(6)
 
-          PanelSectionHeader {
-            text: "NEXT 24 HOURS · " + (root.summary ? root.summary.forecastTotal : 0)
+          SectionHeader {
+            text: Model.fill(root.tr("forecast.header"), root.num(root.summary ? root.summary.forecastTotal : 0))
           }
-
 
           Row {
             id: chart
@@ -1022,7 +1119,7 @@ Panel {
 
                 PanelToolTip {
                   visible: barMouse.containsMouse && modelData.count > 0
-                  text: Model.hourLabel(modelData.time) + ":00 · " + modelData.count
+                  text: Model.fill(strings.tn("forecast.tooltip", modelData.count), root.timeText(modelData.time), root.num(modelData.count))
                 }
 
                 MouseArea {
@@ -1040,6 +1137,7 @@ Panel {
             height: tickRow.implicitHeight
             Row {
               id: tickRow
+              anchors.left: parent.left
               Repeater {
                 model: root.slots
                 delegate: Text {
@@ -1047,7 +1145,7 @@ Panel {
                   required property int index
                   width: chart.barWidth + (index < 23 ? chart.spacing : 0)
                   textFormat: Text.PlainText
-                  text: index % 6 === 0 ? Model.hourLabel(modelData.time) : ""
+                  text: index % 6 === 0 ? root.hourText(modelData.time) : ""
                   color: body.dim
                   font.family: body.family
                   font.pixelSize: Style.font.caption
@@ -1062,13 +1160,12 @@ Panel {
           width: parent.width
           implicitHeight: updatedText.implicitHeight
 
-
           Text {
             id: updatedText
             anchors.right: parent.right
             visible: root.lastUpdated > 0
             textFormat: Text.PlainText
-            text: (root.loading ? "Refreshing… · " : "") + "Updated " + Qt.formatTime(new Date(root.lastUpdated), "hh:mm")
+            text: Model.fill(root.loading ? root.tr("footer.refreshing") : root.tr("footer.updated"), root.timeText(root.lastUpdated))
             color: body.dim
             font.family: body.family
             font.pixelSize: Style.font.caption
@@ -1076,6 +1173,14 @@ Panel {
         }
       }
     }
+  }
+
+  // Section header in the popup's style; catalog strings stay in sentence
+  // case and are upper-cased here, so translators don't have to.
+  component SectionHeader: PanelSectionHeader {
+    foreground: root.bar ? root.bar.foreground : Commons.Color.foreground
+    fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+    font.capitalization: Font.AllUppercase
   }
 
   // Label on the left, one control on the right.
@@ -1132,7 +1237,7 @@ Panel {
     id: tile
     property string label: ""
     property int value: 0
-    property string valueText: ""   // overrides the number (e.g. ✓)
+    property string valueText: ""   // overrides the number (e.g. the done check)
     property bool celebrate: false  // accent-tinted tile
     property string note: ""        // plain line under the label
     property string actionText: ""
@@ -1157,7 +1262,7 @@ Panel {
       Text {
         anchors.horizontalCenter: parent.horizontalCenter
         textFormat: Text.PlainText
-        text: tile.valueText !== "" ? tile.valueText : String(tile.value)
+        text: tile.valueText !== "" ? tile.valueText : root.num(tile.value)
         color: tile.value > 0 || tile.celebrate ? Commons.Color.accent : tile.fg
         font.family: tile.family
         font.pixelSize: Style.font.display
@@ -1172,6 +1277,7 @@ Panel {
         font.pixelSize: Style.font.caption
         font.bold: true
         font.letterSpacing: 1.2
+        font.capitalization: Font.AllUppercase
       }
       Text {
         anchors.horizontalCenter: parent.horizontalCenter

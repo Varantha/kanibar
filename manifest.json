@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.erfoip.kanibar",
   "name": "Kanibar",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": "erfoip",
   "license": "MIT",
   "description": "WaniKani reviews and lessons in your bar, with a popup for level progress, SRS stages, the review forecast and an optional daily reminder.",
@@ -39,12 +39,12 @@
       {
         "key": "refreshMinutes",
         "type": "integer",
-        "label": "Refresh interval (minutes)",
-        "min": 1,
+        "label": "Refresh interval (minutes, 0 = off)",
+        "min": 0,
         "max": 60,
         "step": 1,
         "defaultValue": 10,
-        "description": "Kanibar also refreshes right after each full hour, when new reviews unlock."
+        "description": "How often the bar counts are fetched in the background. Kanibar also refreshes just after each full hour, when new reviews unlock. 0 turns background refresh off; opening the popup or middle-clicking still refreshes."
       },
       {
         "key": "showLessons",
@@ -93,6 +93,7 @@
         "defaultValue": 1,
         "description": "Only remind when at least this many reviews are waiting."
       }
-    ]
+    ],
+    "defaultSection": "centerEnd"
   }
 }
