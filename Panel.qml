@@ -24,6 +24,9 @@ Panel {
   readonly property bool showLessons: setting("showLessons", true) === true
   readonly property bool hideWhenIdle: setting("hideWhenIdle", false) === true
   readonly property int highlightThreshold: Math.max(0, parseInt(setting("highlightThreshold", 0), 10) || 0)
+  readonly property bool reminderEnabled: setting("reminderEnabled", false) === true
+  readonly property int reminderMinutes: Model.parseClock(setting("reminderTime", "19:00"))
+  readonly property int reminderMinReviews: Math.max(1, parseInt(setting("reminderMinReviews", 1), 10) || 1)
 
   // ---------- State ----------
   // summary/user are kept on failure so stale numbers stay visible.
@@ -193,6 +196,47 @@ Panel {
     xhr.send()
   }
 
+  // ---------- Daily reminder ----------
+  // The handled date lives on disk: the shell rebuilds plugins whenever any
+  // plugin's files change, which would otherwise re-send the reminder.
+  property string reminderLastDate: ""
+  property bool reminderStateLoaded: false
+  property bool reminderChecking: false
+
+  function checkReminder() {
+    var now = Date.now()
+    if (!root.reminderEnabled || !root.hasToken || !root.reminderStateLoaded || root.reminderChecking) return
+    if (!Model.reminderDue(now, root.reminderMinutes, root.reminderLastDate)) return
+    root.reminderChecking = true
+    // Fresh counts, so reviews done minutes ago don't trigger a stale nag.
+    request("/summary", function(status, json) {
+      root.reminderChecking = false
+      if (status !== 200) return   // not marked: retry next minute
+      var s = Model.parseSummary(json, Date.now())
+      root.summary = s
+      root.markReminderDone(now)
+      if (s.reviews >= root.reminderMinReviews) root.sendReminder(s.reviews, s.lessons)
+    })
+  }
+
+  function markReminderDone(now) {
+    root.reminderLastDate = Model.dateKey(now)
+    reminderFile.setText(root.reminderLastDate + "\n")
+  }
+
+  function sendReminder(reviews, lessons) {
+    var t = Model.reminderText(reviews, lessons)
+    notifyProc.command = [
+      "omarchy-notification-send",
+      "--app-name", "Kanibar",
+      "-g", "鰐",
+      "-u", "normal",
+      t.headline, t.body,
+      "--action", "Start reviews", "omarchy-launch-browser", Model.REVIEW_URL
+    ]
+    notifyProc.running = true
+  }
+
   function openUrl(url) {
     Quickshell.execDetached(["omarchy-launch-browser", url])
     root.close()
@@ -218,6 +262,26 @@ Panel {
     function hide() { root.close() }
     function toggle() { root.toggle() }
     function refresh() { root.refresh() }
+    // Sends the reminder now with the current counts (for testing the look).
+    function testReminder() { root.sendReminder(root.reviews, root.lessons) }
+  }
+
+  Process { id: notifyProc }
+
+  FileView {
+    id: reminderFile
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/kanibar-reminder"
+    printErrors: false
+    onLoaded: { root.reminderLastDate = String(text() || "").trim(); root.reminderStateLoaded = true }
+    onLoadFailed: { root.reminderLastDate = ""; root.reminderStateLoaded = true }
+  }
+
+  Timer {
+    interval: 60000
+    running: root.reminderEnabled && root.hasToken
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.checkReminder()
   }
 
   // Writes the token with mode 600. It travels over stdin, never argv, so it

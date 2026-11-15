@@ -9,6 +9,8 @@ WaniKani at a glance in your [Omarchy](https://omarchy.org) bar.
 - **SRS breakdown**: Apprentice / Guru / Master / Enlightened / Burned
 - the time until your next reviews and a 24-hour review forecast
 
+**Daily reminder** (optional) — a notification at a time you choose (e.g. 19:00) if reviews are still waiting, with a *Start reviews* button. If your computer is asleep then, it reminds you when it wakes, until midnight, and never more than once a day.
+
 Data comes straight from the official [WaniKani API v2](https://docs.api.wanikani.com/). Kanibar refreshes the bar counts on an interval and again just after each full hour, when new reviews unlock. Level progress and SRS stages are fetched only while the popup is open (at most every two minutes), so the background cost stays at two requests.
 
 ## Install
@@ -35,7 +37,8 @@ You can also write that file yourself, or set the widget's `apiToken` setting, w
 | Right click   | Open the WaniKani dashboard  |
 
 ```sh
-omarchy-shell shell toggle io.github.erfoip.kanibar   # e.g. bind to a key
+omarchy-shell shell toggle io.github.erfoip.kanibar     # e.g. bind to a key
+omarchy-shell io.github.erfoip.kanibar testReminder    # preview the reminder notification
 ```
 
 ## Settings
@@ -47,6 +50,9 @@ omarchy-shell shell toggle io.github.erfoip.kanibar   # e.g. bind to a key
 | `showLessons`        | `true`  | Show the lesson count next to reviews on the bar                 |
 | `hideWhenIdle`       | `false` | Hide the pill while nothing is due                               |
 | `highlightThreshold` | `0`     | Use the urgent color once this many reviews wait (0 = off)       |
+| `reminderEnabled`    | `false` | Daily notification when reviews are still waiting                |
+| `reminderTime`       | `19:00` | When to remind (24-hour local time)                              |
+| `reminderMinReviews` | `1`     | Only remind when at least this many reviews are waiting          |
 
 ## Development
 

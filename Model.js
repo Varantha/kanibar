@@ -220,3 +220,38 @@ function stageName(stage) {
   if (stage === 8) return "Enlightened"
   return "Burned"
 }
+
+// ---------- Daily review reminder ----------
+
+// "19:00" / "7:30" → minutes after midnight, or -1 when unparseable.
+function parseClock(text) {
+  var m = /^\s*(\d{1,2}):(\d{2})\s*$/.exec(String(text || ""))
+  if (!m) return -1
+  var h = parseInt(m[1], 10), min = parseInt(m[2], 10)
+  if (h > 23 || min > 59) return -1
+  return h * 60 + min
+}
+
+// Local calendar date, used to remember "already reminded today".
+function dateKey(time) {
+  var d = new Date(time)
+  var mm = d.getMonth() + 1, dd = d.getDate()
+  return d.getFullYear() + "-" + (mm < 10 ? "0" : "") + mm + "-" + (dd < 10 ? "0" : "") + dd
+}
+
+// Due once the configured time has passed today and today hasn't been
+// handled yet, so a laptop asleep at 19:00 still gets reminded on wake
+// (until midnight).
+function reminderDue(now, clockMinutes, lastDateKey) {
+  if (clockMinutes < 0) return false
+  var d = new Date(now)
+  if (d.getHours() * 60 + d.getMinutes() < clockMinutes) return false
+  return dateKey(now) !== String(lastDateKey || "").trim()
+}
+
+function reminderText(reviews, lessons) {
+  var headline = reviews === 1 ? "1 WaniKani review waiting" : reviews + " WaniKani reviews waiting"
+  var body = "Clear them before the day ends to keep the pile small."
+  if (lessons > 0) body += " " + lessons + (lessons === 1 ? " lesson is" : " lessons are") + " available too."
+  return { headline: headline, body: body }
+}

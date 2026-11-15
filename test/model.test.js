@@ -122,3 +122,29 @@ test("stageName", () => {
   assert.equal(Model.stageName(6), "Guru 2")
   assert.equal(Model.stageName(9), "Burned")
 })
+
+test("parseClock", () => {
+  assert.equal(Model.parseClock("19:00"), 1140)
+  assert.equal(Model.parseClock(" 7:30 "), 450)
+  assert.equal(Model.parseClock("24:00"), -1)
+  assert.equal(Model.parseClock("7pm"), -1)
+  assert.equal(Model.parseClock(""), -1)
+})
+
+test("reminderDue fires once per day after the configured time", () => {
+  const at = (h, m) => new Date(2026, 10, 15, h, m).getTime()
+  const seven = Model.parseClock("19:00")
+  assert.equal(Model.reminderDue(at(18, 59), seven, ""), false)
+  assert.equal(Model.reminderDue(at(19, 0), seven, ""), true)
+  assert.equal(Model.reminderDue(at(22, 30), seven, "2026-11-14"), true)   // woke up late
+  assert.equal(Model.reminderDue(at(22, 30), seven, "2026-11-15\n"), false) // already done today
+  assert.equal(Model.reminderDue(at(22, 30), -1, ""), false)
+  assert.equal(Model.dateKey(at(9, 0)), "2026-11-15")
+})
+
+test("reminderText", () => {
+  assert.equal(Model.reminderText(1, 0).headline, "1 WaniKani review waiting")
+  assert.equal(Model.reminderText(49, 0).headline, "49 WaniKani reviews waiting")
+  assert.match(Model.reminderText(49, 5).body, /5 lessons are available/)
+  assert.doesNotMatch(Model.reminderText(49, 0).body, /lesson/)
+})
