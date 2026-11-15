@@ -1,0 +1,8 @@
+# Local secrets / tokens
+*.token
+.env
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
