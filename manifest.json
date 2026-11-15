@@ -93,7 +93,6 @@
         "defaultValue": 1,
         "description": "Only remind when at least this many reviews are waiting."
       }
-    ],
-    "defaultSection": "centerEnd"
+    ]
   }
 }
