@@ -76,3 +76,10 @@ test("errorMessage", () => {
   assert.match(Model.errorMessage(401), /token/)
   assert.match(Model.errorMessage(0), /reach/)
 })
+
+test("tokenProblem", () => {
+  assert.equal(Model.tokenProblem("  8f2b1c3a-1234-4abc-9def-0123456789ab \n"), "")
+  assert.match(Model.tokenProblem(""), /Paste/)
+  assert.match(Model.tokenProblem("https://www.wanikani.com"), /look like/)
+  assert.match(Model.tokenProblem("abc123"), /look like/)
+})

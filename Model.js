@@ -119,3 +119,15 @@ function errorMessage(status) {
   if (status >= 500) return "WaniKani is having trouble (" + status + ")."
   return "Request failed (" + status + ")."
 }
+
+var TOKEN_URL = "https://www.wanikani.com/settings/personal_access_tokens"
+
+// API v2 tokens are UUIDs. Catches pasting the wrong thing (e.g. a v1 key or
+// a URL) before bothering the API. Empty string means it looks fine.
+function tokenProblem(token) {
+  var t = String(token || "").trim()
+  if (t === "") return "Paste your token first."
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t))
+    return "That doesn't look like a WaniKani API v2 token (xxxxxxxx-xxxx-…)."
+  return ""
+}

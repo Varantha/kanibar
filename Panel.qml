@@ -35,6 +35,15 @@ Panel {
   property real now: Date.now()
 
   readonly property bool hasToken: apiToken !== ""
+  readonly property string tokenDir: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/kanibar"
+
+  // ---------- In-popup token entry ----------
+  property bool tokenRejected: false   // last refresh got a 401
+  property bool editingToken: false    // "Change token" clicked
+  property bool tokenBusy: false
+  property string tokenError: ""
+  property string pendingToken: ""
+  readonly property bool showTokenEntry: !hasToken || tokenRejected || editingToken
   readonly property int reviews: summary ? summary.reviews : 0
   readonly property int lessons: summary ? summary.lessons : 0
   readonly property bool idle: summary !== null && reviews === 0 && lessons === 0
@@ -66,17 +75,60 @@ Panel {
     request("/summary", function(status, json) {
       if (status === 200) root.summary = Model.parseSummary(json, Date.now())
       else failure = Model.errorMessage(status)
+      if (status === 401) root.tokenRejected = true
       done()
     })
     request("/user", function(status, json) {
-      if (status === 200) root.user = Model.parseUser(json)
-      else if (failure === "") failure = Model.errorMessage(status)
+      if (status === 200) {
+        root.user = Model.parseUser(json)
+        root.tokenRejected = false
+      } else if (failure === "") failure = Model.errorMessage(status)
       done()
     })
   }
 
+  // Check a pasted token against the API, then store it. Nothing is saved
+  // unless WaniKani accepts it.
+  function submitToken(raw) {
+    var token = String(raw || "").trim()
+    if (root.tokenBusy) return
+    var problem = Model.tokenProblem(token)
+    if (problem !== "") {
+      root.tokenError = problem
+      return
+    }
+    root.tokenBusy = true
+    root.tokenError = ""
+    request("/user", function(status, json) {
+      if (status !== 200) {
+        root.tokenBusy = false
+        root.tokenError = status === 401 ? "WaniKani doesn't recognize this token." : Model.errorMessage(status)
+        return
+      }
+      root.user = Model.parseUser(json)
+      root.pendingToken = token
+      saveProc.running = true
+    }, token)
+  }
+
+  function finishTokenSave(ok) {
+    root.tokenBusy = false
+    if (!ok) {
+      root.tokenError = "Couldn't write " + root.tokenDir + "/token."
+      root.pendingToken = ""
+      return
+    }
+    // Use it right away; the FileView watch confirms it moments later.
+    root.fileToken = root.pendingToken
+    root.pendingToken = ""
+    root.tokenRejected = false
+    root.editingToken = false
+    root.error = ""
+    root.refresh()
+  }
+
   // XMLHttpRequest keeps the token out of process argv (unlike curl).
-  function request(path, callback) {
+  function request(path, callback, tokenOverride) {
     var xhr = new XMLHttpRequest()
     xhr.onreadystatechange = function() {
       if (xhr.readyState !== XMLHttpRequest.DONE) return
@@ -85,7 +137,7 @@ Panel {
       callback(xhr.status, json)
     }
     xhr.open("GET", Model.API_BASE + path)
-    xhr.setRequestHeader("Authorization", "Bearer " + root.apiToken)
+    xhr.setRequestHeader("Authorization", "Bearer " + (tokenOverride || root.apiToken))
     xhr.setRequestHeader("Wanikani-Revision", Model.API_REVISION)
     xhr.send()
   }
@@ -96,7 +148,14 @@ Panel {
   }
 
   onApiTokenChanged: Qt.callLater(refresh)
-  onOpenedChanged: if (opened) refresh()
+  onOpenedChanged: {
+    if (opened) {
+      refresh()
+    } else {
+      editingToken = false
+      tokenError = ""
+    }
+  }
   Component.onCompleted: Qt.callLater(refresh)
 
   ShellIpc {
@@ -110,9 +169,19 @@ Panel {
     function refresh() { root.refresh() }
   }
 
-  // Token fallback for people who'd rather not keep it in shell.json.
+  // Writes the token with mode 600. It travels over stdin, never argv, so it
+  // doesn't show up in the process list.
+  Process {
+    id: saveProc
+    stdinEnabled: true
+    command: ["sh", "-c", "umask 077 && mkdir -p \"$1\" && IFS= read -r t && printf '%s\\n' \"$t\" > \"$1/token\" && chmod 600 \"$1/token\"", "sh", root.tokenDir]
+    onStarted: write(root.pendingToken + "\n")
+    onExited: function(exitCode) { root.finishTokenSave(exitCode === 0) }
+  }
+
+  // The popup saves here; hand-written files work too.
   FileView {
-    path: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/kanibar/token"
+    path: root.tokenDir + "/token"
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
@@ -204,13 +273,17 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: panel.loadedContent
+    // The token field takes focus whenever it's showing, so pasting works
+    // straight away.
+    focusTarget: panel.loadedContent && root.showTokenEntry ? panel.loadedContent.tokenInput : panel.loadedContent
     contentWidth: panel.fittedContentWidth(Style.space(340))
     contentHeight: panel.fittedContentHeight(panel.loadedContentHeight)
 
     content: PanelKeyCatcher {
       id: body
+      property alias tokenInput: tokenField
       anchors.fill: parent
+      blocked: root.showTokenEntry && tokenField.activeFocus
       implicitHeight: column.implicitHeight
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
@@ -244,23 +317,119 @@ Panel {
           }
         }
 
-        // ---------- Missing token / error ----------
+        // ---------- Token entry (first run, rejected token, or "Change token") ----------
+        Column {
+          visible: root.showTokenEntry
+          width: parent.width
+          spacing: Style.space(8)
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: root.tokenRejected && !root.editingToken
+              ? "WaniKani rejected the saved token. Paste a new one:"
+              : "Paste a read-only WaniKani API token to connect:"
+            color: body.fg
+            font.family: body.family
+            font.pixelSize: Style.font.body
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+
+            TextField {
+              id: tokenField
+              width: parent.width - connectButton.width - parent.spacing
+              password: true
+              enabled: !root.tokenBusy
+              placeholderText: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              foreground: body.fg
+              font.family: body.family
+              onTextChanged: root.tokenError = ""
+              onAccepted: root.submitToken(text)
+              Keys.onEscapePressed: function(event) {
+                if (root.editingToken) root.editingToken = false
+                else root.close()
+                event.accepted = true
+              }
+            }
+
+            Button {
+              id: connectButton
+              text: root.tokenBusy ? "Checking…" : "Connect"
+              bordered: true
+              enabled: !root.tokenBusy && tokenField.text.trim() !== ""
+              foreground: body.fg
+              fontFamily: body.family
+              anchors.verticalCenter: tokenField.verticalCenter
+              onClicked: root.submitToken(tokenField.text)
+            }
+          }
+
+          Text {
+            width: parent.width
+            visible: root.tokenError !== ""
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: root.tokenError
+            color: Commons.Color.urgent
+            font.family: body.family
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Text {
+            width: parent.width
+            visible: root.settingsToken !== ""
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: "A token is set in the widget settings and takes precedence. Clear it there to use this one."
+            color: body.dim
+            font.family: body.family
+            font.pixelSize: Style.font.caption
+          }
+
+          Row {
+            spacing: Style.space(12)
+
+            LinkText {
+              text: "Get a token ↗"
+              onActivated: root.openUrl(Model.TOKEN_URL)
+            }
+            LinkText {
+              visible: root.editingToken
+              text: "Cancel"
+              onActivated: root.editingToken = false
+            }
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: "Saved to " + root.tokenDir.replace(Quickshell.env("HOME"), "~") + "/token (only readable by you)."
+            color: body.dim
+            font.family: body.family
+            font.pixelSize: Style.font.caption
+          }
+        }
+
+        // ---------- Request error ----------
         Text {
           width: parent.width
-          visible: !root.hasToken || root.error !== ""
+          visible: !root.showTokenEntry && root.error !== ""
           wrapMode: Text.WordWrap
           textFormat: Text.PlainText
-          text: !root.hasToken
-            ? "Add a read-only API token in the widget settings, or save it to ~/.config/kanibar/token."
-            : root.error
-          color: root.hasToken ? Commons.Color.urgent : body.dim
+          text: root.error
+          color: Commons.Color.urgent
           font.family: body.family
           font.pixelSize: Style.font.body
         }
 
         // ---------- Counts ----------
         Row {
-          visible: root.summary !== null
+          visible: root.summary !== null && !root.showTokenEntry
           width: parent.width
           spacing: Style.space(10)
 
@@ -283,7 +452,7 @@ Panel {
 
         // ---------- Forecast ----------
         Column {
-          visible: root.summary !== null
+          visible: root.summary !== null && !root.showTokenEntry
           width: parent.width
           spacing: Style.space(6)
 
@@ -362,17 +531,49 @@ Panel {
           }
         }
 
-        Text {
-          visible: root.lastUpdated > 0
+        Item {
+          visible: root.hasToken && !root.showTokenEntry
           width: parent.width
-          horizontalAlignment: Text.AlignRight
-          textFormat: Text.PlainText
-          text: (root.loading ? "Refreshing… · " : "") + "Updated " + Qt.formatTime(new Date(root.lastUpdated), "hh:mm")
-          color: body.dim
-          font.family: body.family
-          font.pixelSize: Style.font.caption
+          implicitHeight: Math.max(changeLink.implicitHeight, updatedText.implicitHeight)
+
+          LinkText {
+            id: changeLink
+            anchors.left: parent.left
+            text: "Change token"
+            onActivated: root.editingToken = true
+          }
+
+          Text {
+            id: updatedText
+            anchors.right: parent.right
+            visible: root.lastUpdated > 0
+            textFormat: Text.PlainText
+            text: (root.loading ? "Refreshing… · " : "") + "Updated " + Qt.formatTime(new Date(root.lastUpdated), "hh:mm")
+            color: body.dim
+            font.family: body.family
+            font.pixelSize: Style.font.caption
+          }
         }
       }
+    }
+  }
+
+  component LinkText: Text {
+    id: link
+    signal activated()
+    readonly property color fg: root.bar ? root.bar.foreground : Commons.Color.foreground
+    textFormat: Text.PlainText
+    color: linkMouse.containsMouse ? Commons.Color.accent : Qt.darker(fg, 1.4)
+    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+    font.pixelSize: Style.font.caption
+    font.underline: linkMouse.containsMouse
+
+    MouseArea {
+      id: linkMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: link.activated()
     }
   }
 

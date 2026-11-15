@@ -15,15 +15,12 @@ omarchy plugin add https://github.com/erfoip/kanibar.git --enable
 
 ### API token
 
-Create a **read-only** personal access token at
-[wanikani.com/settings/personal_access_tokens](https://www.wanikani.com/settings/personal_access_tokens), then either:
+Click the pill: on first launch the popup asks for a token. Create a **read-only** personal access token at
+[wanikani.com/settings/personal_access_tokens](https://www.wanikani.com/settings/personal_access_tokens) (the popup links there), paste it and press Enter.
 
-- paste it into the widget's **WaniKani API token** setting, or
-- save it to a file, so it stays out of `shell.json`:
+Kanibar checks the token with WaniKani before saving it to `~/.config/kanibar/token` (mode 600), so it stays out of `shell.json` and your dotfiles. If WaniKani later rejects it, the popup asks again; *Change token* in the popup footer swaps it at any time.
 
-  ```sh
-  mkdir -p ~/.config/kanibar && install -m 600 /dev/stdin ~/.config/kanibar/token <<< "YOUR-TOKEN"
-  ```
+You can also write that file yourself, or set the widget's `apiToken` setting, which takes precedence.
 
 ## Usage
 
@@ -41,7 +38,7 @@ omarchy-shell shell toggle io.github.erfoip.kanibar   # e.g. bind to a key
 
 | Key                  | Default | Description                                                      |
 |----------------------|---------|------------------------------------------------------------------|
-| `apiToken`           | `""`    | WaniKani token; falls back to `~/.config/kanibar/token`          |
+| `apiToken`           | `""`    | Optional; overrides the token saved from the popup               |
 | `refreshMinutes`     | `10`    | Refresh interval (plus a refresh right after every full hour)    |
 | `showLessons`        | `true`  | Show the lesson count next to reviews on the bar                 |
 | `hideWhenIdle`       | `false` | Hide the pill while nothing is due                               |
