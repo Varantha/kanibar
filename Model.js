@@ -1,7 +1,11 @@
 // Pure helpers for Kanibar: WaniKani API response parsing and validation.
 // No QML or Quickshell dependencies, so `node --test test/` can load this
 // file directly. Nothing here produces user-facing prose: functions return
-// numbers or translation keys, and Panel.qml looks the words up in i18n/.
+// numbers or translation keys, and the QML looks the words up in i18n/.
+
+var PLUGIN_ID = "io.github.erfoip.kanibar"
+var APP_NAME = "Kanibar"
+var ICON_GLYPH = "鰐"   // "wani", crocodile
 
 var API_BASE = "https://api.wanikani.com/v2"
 var API_REVISION = "20170710"
@@ -11,8 +15,26 @@ var LESSON_URL = "https://www.wanikani.com/subject-lessons/start"
 var DASHBOARD_URL = "https://www.wanikani.com/dashboard"
 var TOKEN_URL = "https://www.wanikani.com/settings/personal_access_tokens"
 
+// ---------- Time units ----------
+var SECOND_MS = 1000
+var MINUTE_MS = 60 * SECOND_MS
+var HOUR_MS = 60 * MINUTE_MS
+
+// ---------- Schedule ----------
+var DETAILS_MAX_AGE_MS = 2 * MINUTE_MS      // popup details refetch at most this often
+var REMINDER_CHECK_MS = MINUTE_MS
+var CLOCK_TICK_MS = 30 * SECOND_MS          // relative times in the open popup
+var HOUR_REFRESH_SLACK_MS = 30 * SECOND_MS  // after the hour, when reviews unlock
+var FORECAST_HOURS = 24
+var FORECAST_TICK_EVERY = 6                 // hour label every N bars
+
+// ---------- Settings ----------
+var DEFAULT_REFRESH_MINUTES = 10
+var MAX_REFRESH_MINUTES = 60
+var DEFAULT_REMINDER_TIME = "19:00"
+
 // ---------- Request limits ----------
-var REQUEST_TIMEOUT_MS = 15000
+var REQUEST_TIMEOUT_MS = 15 * SECOND_MS
 var MAX_RESPONSE_CHARS = 2 * 1024 * 1024
 // Pseudo-statuses for failures that never got an HTTP status.
 var STATUS_OFFLINE = 0        // network error or timeout
@@ -25,6 +47,17 @@ var STATUS_TOO_LARGE = -1     // response exceeded MAX_RESPONSE_CHARS
 var MAX_COUNT = 100000
 var MAX_LEVEL = 60
 var MAX_ENTRIES = 200
+var MAX_SUMMARY_ENTRIES = 48       // /summary lists at most 24h + 24h
+var MAX_ASSIGNMENTS = 1000
+var MAX_MEANINGS = 20
+var MAX_LESSON_POSITION = 10000
+var MAX_TIMESTAMP_CHARS = 40
+var MAX_USERNAME_CHARS = 64
+var MAX_CHARACTERS_CHARS = 8
+var MAX_MEANING_CHARS = 64
+var MAX_TOKEN_CHARS = 64
+var BURNED_STAGE = 9
+var LOCKED_STAGE = -1              // no assignment yet
 
 function clampInt(value, min, max) {
   var n = Math.floor(Number(value))
@@ -42,98 +75,109 @@ function list(value, max) {
   return Array.isArray(value) ? value.slice(0, max === undefined ? MAX_ENTRIES : max) : []
 }
 
+function objectOr(value, fallback) {
+  return value && typeof value === "object" ? value : fallback
+}
+
+// The `data` object of an API resource, or {} when it is missing.
+function dataOf(json) {
+  return objectOr(json && json.data, {})
+}
+
 function count(entry) {
   return entry && Array.isArray(entry.subject_ids) ? clampInt(entry.subject_ids.length, 0, MAX_COUNT) : 0
 }
 
 function timeOf(value) {
-  if (typeof value !== "string" || value.length > 40) return null
+  if (typeof value !== "string" || value.length > MAX_TIMESTAMP_CHARS) return null
   var t = Date.parse(value)
   return isNaN(t) ? null : t
+}
+
+function sumCounts(entries) {
+  return clampInt(entries.reduce(function(sum, entry) { return sum + entry.count }, 0), 0, MAX_COUNT)
+}
+
+// Splits /summary entries into what is available at `nowMs` and the rest,
+// as { time, count } sorted by time. An entry without a timestamp counts as
+// available.
+function splitByAvailability(entries, nowMs) {
+  var available = []
+  var upcoming = []
+  entries.forEach(function(entry) {
+    var time = timeOf(entry && entry.available_at)
+    var item = { time: time, count: count(entry) }
+    if (time === null || time <= nowMs) available.push(item)
+    else upcoming.push(item)
+  })
+  upcoming.sort(function(a, b) { return a.time - b.time })
+  return { available: available, upcoming: upcoming }
 }
 
 // ---------- /summary ----------
 // `reviews[0]` holds everything already available; later entries are the
 // reviews unlocking at that hour (non-cumulative).
 function parseSummary(json, now) {
-  var data = json && typeof json.data === "object" && json.data ? json.data : {}
-  var lessons = list(data.lessons, 48)
-  var reviews = list(data.reviews, 48)
+  var data = dataOf(json)
   var nowMs = now === undefined ? Date.now() : now
-
-  var lessonCount = 0
-  for (var i = 0; i < lessons.length; i++) {
-    var lt = timeOf(lessons[i] && lessons[i].available_at)
-    if (lt === null || lt <= nowMs) lessonCount += count(lessons[i])
-  }
-
-  var reviewCount = 0
-  var forecast = []
-  for (var j = 0; j < reviews.length; j++) {
-    var rt = timeOf(reviews[j] && reviews[j].available_at)
-    if (rt === null || rt <= nowMs) reviewCount += count(reviews[j])
-    else forecast.push({ time: rt, count: count(reviews[j]) })
-  }
-  forecast.sort(function(a, b) { return a.time - b.time })
+  var lessons = splitByAvailability(list(data.lessons, MAX_SUMMARY_ENTRIES), nowMs)
+  var reviews = splitByAvailability(list(data.reviews, MAX_SUMMARY_ENTRIES), nowMs)
 
   return {
-    lessons: clampInt(lessonCount, 0, MAX_COUNT),
-    reviews: clampInt(reviewCount, 0, MAX_COUNT),
+    lessons: sumCounts(lessons.available),
+    reviews: sumCounts(reviews.available),
     nextReviewsAt: timeOf(data.next_reviews_at),
-    forecast: forecast,
-    forecastTotal: clampInt(forecast.reduce(function(sum, f) { return sum + f.count }, 0), 0, MAX_COUNT)
+    forecast: reviews.upcoming,
+    forecastTotal: sumCounts(reviews.upcoming)
   }
 }
 
 // ---------- /user ----------
 function parseUser(json) {
-  var data = json && typeof json.data === "object" && json.data ? json.data : {}
-  var sub = data.subscription && typeof data.subscription === "object" ? data.subscription : {}
+  var data = dataOf(json)
   return {
-    username: cleanText(data.username, 64),
-    level: clampInt(data.level, 0, MAX_LEVEL),
-    maxLevel: clampInt(sub.max_level_granted, 0, MAX_LEVEL),
-    subscribed: sub.active === true
+    username: cleanText(data.username, MAX_USERNAME_CHARS),
+    level: clampInt(data.level, 0, MAX_LEVEL)
   }
+}
+
+function startOfHour(time) {
+  var d = new Date(time)
+  d.setMinutes(0, 0, 0)
+  return d.getTime()
 }
 
 // Fixed hourly slots starting at the hour after `now`, so the chart keeps
 // its shape even when the API skips empty hours.
 function hourlySlots(forecast, now, hours) {
-  var n = hours || 24
-  var start = new Date(now)
-  start.setMinutes(0, 0, 0)
-  var base = start.getTime() + 3600000
+  var slotCount = hours || FORECAST_HOURS
+  var firstSlot = startOfHour(now) + HOUR_MS
   var slots = []
-  for (var i = 0; i < n; i++) slots.push({ time: base + i * 3600000, count: 0 })
-  for (var j = 0; j < (forecast || []).length; j++) {
-    var idx = Math.round((forecast[j].time - base) / 3600000)
-    if (idx >= 0 && idx < n) slots[idx].count += forecast[j].count
-  }
+  for (var i = 0; i < slotCount; i++) slots.push({ time: firstSlot + i * HOUR_MS, count: 0 })
+  var entries = forecast || []
+  entries.forEach(function(entry) {
+    var index = Math.round((entry.time - firstSlot) / HOUR_MS)
+    if (index >= 0 && index < slotCount) slots[index].count += entry.count
+  })
   return slots
 }
 
 // ---------- Bar pill ----------
 // Shown instead of "0" once every review is done.
-var DONE_MARK = ""   // Nerd Font check (nf-fa-check), bolder than ✓ at bar size
+var DONE_MARK = ""   // Nerd Font check (nf-fa-check), bolder than ✓ at bar size
 
 // The pill in two parts so the done mark can take the accent color:
 // main = review count or the check, extra = "· <lessons>" or "".
 // `formatNumber` localizes digits (Commons.I18n.formatNumber in the shell).
 function barParts(state, showLessons, formatNumber) {
-  var fmt = formatNumber || String
+  var format = formatNumber || String
   if (!state || state.reviews === undefined) return { main: "…", extra: "", done: false }
   var done = state.reviews === 0
   return {
-    main: done ? DONE_MARK : fmt(state.reviews),
-    extra: showLessons && state.lessons > 0 ? "· " + fmt(state.lessons) : "",
+    main: done ? DONE_MARK : format(state.reviews),
+    extra: showLessons && state.lessons > 0 ? "· " + format(state.lessons) : "",
     done: done
   }
-}
-
-function barLabel(state, showLessons, formatNumber) {
-  var parts = barParts(state, showLessons, formatNumber)
-  return parts.extra ? parts.main + " " + parts.extra : parts.main
 }
 
 // ---------- Time ----------
@@ -143,40 +187,48 @@ function duration(target, now) {
   if (target === null || target === undefined) return { kind: "none" }
   var diff = target - now
   if (diff <= 0) return { kind: "now" }
-  var minutes = Math.round(diff / 60000)
+  var minutes = Math.round(diff / MINUTE_MS)
   if (minutes < 60) return { kind: "minutes", minutes: Math.max(1, minutes) }
   var hours = Math.floor(minutes / 60)
-  var rest = minutes % 60
-  if (hours < 24) return rest ? { kind: "hoursMinutes", hours: hours, minutes: rest } : { kind: "hours", hours: hours }
+  var restMinutes = minutes % 60
+  if (hours < 24) {
+    return restMinutes ? { kind: "hoursMinutes", hours: hours, minutes: restMinutes } : { kind: "hours", hours: hours }
+  }
   var days = Math.floor(hours / 24)
-  return hours % 24 ? { kind: "daysHours", days: days, hours: hours % 24 } : { kind: "days", days: days }
+  var restHours = hours % 24
+  return restHours ? { kind: "daysHours", days: days, hours: restHours } : { kind: "days", days: days }
 }
 
 // Milliseconds until shortly after the next full hour, when WaniKani unlocks
 // the next batch of reviews.
 function msUntilNextHour(now, slackMs) {
-  var d = new Date(now)
-  d.setMinutes(0, 0, 0)
-  return d.getTime() + 3600000 + (slackMs === undefined ? 30000 : slackMs) - now
+  var slack = slackMs === undefined ? HOUR_REFRESH_SLACK_MS : slackMs
+  return startOfHour(now) + HOUR_MS + slack - now
 }
 
 // ---------- Errors ----------
-// → { key, arg } for i18n ("error.server" takes the status as %1).
+// Messages are { key, arg } for i18n; the catalog string fills %1 with arg.
+function message(key, arg) {
+  return { key: key, arg: arg === undefined ? "" : String(arg) }
+}
+
 function errorInfo(status) {
-  if (status === STATUS_TOO_LARGE) return { key: "error.tooLarge", arg: "" }
-  if (status === STATUS_OFFLINE) return { key: "error.offline", arg: "" }
-  if (status === 401) return { key: "error.token", arg: "" }
-  if (status === 429) return { key: "error.rateLimited", arg: "" }
-  if (status >= 500) return { key: "error.server", arg: String(status) }
-  return { key: "error.generic", arg: String(status) }
+  if (status === STATUS_TOO_LARGE) return message("error.tooLarge")
+  if (status === STATUS_OFFLINE) return message("error.offline")
+  if (status === 401) return message("error.token")
+  if (status === 429) return message("error.rateLimited")
+  if (status >= 500) return message("error.server", status)
+  return message("error.generic", status)
 }
 
 // API v2 tokens are UUIDs. Catches pasting the wrong thing (e.g. a v1 key or
 // a URL) before bothering the API. Returns an i18n key, or "" if it looks fine.
+var TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 function tokenProblem(token) {
-  var t = String(token || "").trim()
-  if (t === "") return "token.empty"
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)) return "token.format"
+  var trimmed = String(token || "").trim()
+  if (trimmed === "") return "token.empty"
+  if (!TOKEN_PATTERN.test(trimmed)) return "token.format"
   return ""
 }
 
@@ -193,9 +245,9 @@ var SRS_GROUPS = [
 ]
 
 function srsBreakdown(counts) {
-  var c = counts || {}
-  return SRS_GROUPS.map(function(g) {
-    return { key: g.key, count: clampInt(c[g.key] || 0, 0, MAX_COUNT) }
+  var byGroup = counts || {}
+  return SRS_GROUPS.map(function(group) {
+    return { key: group.key, count: clampInt(byGroup[group.key] || 0, 0, MAX_COUNT) }
   })
 }
 
@@ -208,39 +260,44 @@ function totalCount(json) {
 // Guru, i.e. have a passed_at timestamp.
 var LEVEL_UP_RATIO = 0.9
 
+function assignmentsBySubject(assignmentsJson) {
+  var bySubject = {}
+  list(assignmentsJson && assignmentsJson.data, MAX_ASSIGNMENTS).forEach(function(resource) {
+    var assignment = dataOf(resource)
+    if (typeof assignment.subject_id === "number") bySubject[assignment.subject_id] = assignment
+  })
+  return bySubject
+}
+
+function primaryMeaning(subjectData) {
+  var primary = list(subjectData.meanings, MAX_MEANINGS).filter(function(m) { return m && m.primary })[0]
+  return primary ? cleanText(primary.meaning, MAX_MEANING_CHARS) : ""
+}
+
 // subjectsJson: /subjects?levels=L&types=kanji
 // assignmentsJson: /assignments?levels=L&subject_types=kanji
 function levelProgress(subjectsJson, assignmentsJson, level) {
-  var subjects = list(subjectsJson && subjectsJson.data)
-  var assignments = list(assignmentsJson && assignmentsJson.data, 1000)
-
-  var bySubject = {}
-  for (var i = 0; i < assignments.length; i++) {
-    var a = assignments[i] && assignments[i].data ? assignments[i].data : {}
-    if (typeof a.subject_id === "number") bySubject[a.subject_id] = a
-  }
+  var bySubject = assignmentsBySubject(assignmentsJson)
 
   var items = []
-  for (var j = 0; j < subjects.length; j++) {
-    var s = subjects[j] || {}
-    var d = s.data || {}
-    if (d.hidden_at || typeof s.id !== "number") continue
-    var asg = bySubject[s.id]
-    var stage = asg ? clampInt(asg.srs_stage, 0, 9) : -1   // -1 = still locked
-    var primary = list(d.meanings, 20).filter(function(m) { return m && m.primary })[0]
+  list(subjectsJson && subjectsJson.data).forEach(function(subject) {
+    var resource = subject || {}
+    var subjectData = dataOf(resource)
+    if (subjectData.hidden_at || typeof resource.id !== "number") return
+    var assignment = bySubject[resource.id]
     items.push({
-      id: s.id,
-      characters: cleanText(d.characters, 8) || "?",
-      meaning: primary ? cleanText(primary.meaning, 64) : "",
-      position: clampInt(d.lesson_position, 0, 10000),
-      stage: stage,
-      passed: !!(asg && asg.passed_at)
+      id: resource.id,
+      characters: cleanText(subjectData.characters, MAX_CHARACTERS_CHARS) || "?",
+      meaning: primaryMeaning(subjectData),
+      position: clampInt(subjectData.lesson_position, 0, MAX_LESSON_POSITION),
+      stage: assignment ? clampInt(assignment.srs_stage, 0, BURNED_STAGE) : LOCKED_STAGE,
+      passed: !!(assignment && assignment.passed_at)
     })
-  }
-  items.sort(function(x, y) { return x.position - y.position })
+  })
+  items.sort(function(a, b) { return a.position - b.position })
 
   var total = items.length
-  var passed = items.filter(function(it) { return it.passed }).length
+  var passed = items.filter(function(item) { return item.passed }).length
   var required = Math.ceil(total * LEVEL_UP_RATIO)
   return {
     level: clampInt(level, 0, MAX_LEVEL),
@@ -260,33 +317,48 @@ function itemState(item) {
   return "learning"
 }
 
-// → { key, arg } for i18n.
 function stageInfo(stage) {
-  if (stage < 0) return { key: "stage.locked", arg: "" }
-  if (stage === 0) return { key: "stage.lesson", arg: "" }
-  if (stage <= 4) return { key: "stage.apprentice", arg: String(stage) }
-  if (stage <= 6) return { key: "stage.guru", arg: String(stage - 4) }
-  if (stage === 7) return { key: "stage.master", arg: "" }
-  if (stage === 8) return { key: "stage.enlightened", arg: "" }
-  return { key: "stage.burned", arg: "" }
+  if (stage < 0) return message("stage.locked")
+  if (stage === 0) return message("stage.lesson")
+  if (stage <= 4) return message("stage.apprentice", stage)
+  if (stage <= 6) return message("stage.guru", stage - 4)
+  if (stage === 7) return message("stage.master")
+  if (stage === 8) return message("stage.enlightened")
+  return message("stage.burned")
+}
+
+// ---------- Settings ----------
+// Integer setting clamped to [min, max]; `fallback` when missing or not a number.
+function intSetting(value, fallback, min, max) {
+  var n = parseInt(value, 10)
+  return clampInt(isNaN(n) ? fallback : n, min, max === undefined ? Number.MAX_SAFE_INTEGER : max)
+}
+
+// The reminder time as shown in its text field.
+function clockText(value) {
+  return String(value === undefined || value === null ? DEFAULT_REMINDER_TIME : value).slice(0, 5)
 }
 
 // ---------- Daily review reminder ----------
 
 // "19:00" / "7:30" → minutes after midnight, or -1 when unparseable.
 function parseClock(text) {
-  var m = /^\s*(\d{1,2}):(\d{2})\s*$/.exec(String(text || ""))
-  if (!m) return -1
-  var h = parseInt(m[1], 10), min = parseInt(m[2], 10)
-  if (h > 23 || min > 59) return -1
-  return h * 60 + min
+  var match = /^\s*(\d{1,2}):(\d{2})\s*$/.exec(String(text || ""))
+  if (!match) return -1
+  var hours = parseInt(match[1], 10)
+  var minutes = parseInt(match[2], 10)
+  if (hours > 23 || minutes > 59) return -1
+  return hours * 60 + minutes
+}
+
+function pad2(n) {
+  return (n < 10 ? "0" : "") + n
 }
 
 // Local calendar date, used to remember "already reminded today".
 function dateKey(time) {
   var d = new Date(time)
-  var mm = d.getMonth() + 1, dd = d.getDate()
-  return d.getFullYear() + "-" + (mm < 10 ? "0" : "") + mm + "-" + (dd < 10 ? "0" : "") + dd
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
 }
 
 // Due once the configured time has passed today and today hasn't been

@@ -63,7 +63,7 @@ test("hourlySlots buckets the forecast into 24 fixed hours", () => {
 
 test("parseUser", () => {
   const u = Model.parseUser({ data: { username: "koichi", level: 12, subscription: { active: true, max_level_granted: 60 } } })
-  assert.deepEqual(plain(u), { username: "koichi", level: 12, maxLevel: 60, subscribed: true })
+  assert.deepEqual(plain(u), { username: "koichi", level: 12 })
 })
 
 test("parseUser clamps and cleans untrusted fields", () => {
@@ -78,7 +78,7 @@ test("parseUser clamps and cleans untrusted fields", () => {
 
 // ---------- Markup-shaped input ----------
 // Model keeps markup as literal text (never interprets or strips it); every
-// sink renders Text.PlainText (enforced by the Panel.qml test below).
+// sink renders Text.PlainText (enforced by the QML tests below).
 
 const MARKUP = '<img src="https://example.invalid/tracker"><b>x</b>'
 
@@ -100,17 +100,14 @@ test("fill inserts untrusted text without re-scanning it", () => {
 
 // ---------- Pill ----------
 
-test("barParts and barLabel", () => {
-  assert.equal(Model.barLabel(null, true), "…")
-  assert.equal(Model.barLabel({ reviews: 42, lessons: 5 }, true), "42 · 5")
-  assert.equal(Model.barLabel({ reviews: 42, lessons: 5 }, false), "42")
-  assert.equal(Model.barLabel({ reviews: 0, lessons: 0 }, true), Model.DONE_MARK)
-  assert.equal(Model.barLabel({ reviews: 0, lessons: 5 }, true), Model.DONE_MARK + " · 5")
-  const parts = Model.barParts({ reviews: 0, lessons: 5 }, false)
-  assert.equal(parts.done, true)
-  assert.equal(parts.extra, "")
+test("barParts", () => {
+  assert.deepEqual(plain(Model.barParts(null, true)), { main: "…", extra: "", done: false })
+  assert.deepEqual(plain(Model.barParts({ reviews: 42, lessons: 5 }, true)), { main: "42", extra: "· 5", done: false })
+  assert.equal(Model.barParts({ reviews: 42, lessons: 5 }, false).extra, "")
+  assert.deepEqual(plain(Model.barParts({ reviews: 0, lessons: 0 }, true)), { main: Model.DONE_MARK, extra: "", done: true })
+  assert.deepEqual(plain(Model.barParts({ reviews: 0, lessons: 5 }, true)), { main: Model.DONE_MARK, extra: "· 5", done: true })
   // Localized digits come from the formatter.
-  assert.equal(Model.barLabel({ reviews: 1234, lessons: 5 }, true, (n) => "#" + n), "#1234 · #5")
+  assert.deepEqual(plain(Model.barParts({ reviews: 1234, lessons: 5 }, true, (n) => "#" + n)), { main: "#1234", extra: "· #5", done: false })
 })
 
 // ---------- Time ----------
@@ -199,6 +196,15 @@ test("stageInfo", () => {
 
 // ---------- Reminder ----------
 
+test("intSetting and clockText", () => {
+  assert.equal(Model.intSetting("15", 10, 0, 60), 15)
+  assert.equal(Model.intSetting("nope", 10, 0, 60), 10)
+  assert.equal(Model.intSetting(999, 10, 0, 60), 60)
+  assert.equal(Model.intSetting(-4, 1, 1), 1)
+  assert.equal(Model.clockText("07:30:00"), "07:30")
+  assert.equal(Model.clockText(undefined), Model.DEFAULT_REMINDER_TIME)
+})
+
 test("parseClock", () => {
   assert.equal(Model.parseClock("19:00"), 1140)
   assert.equal(Model.parseClock(" 7:30 "), 450)
@@ -220,12 +226,15 @@ test("reminderDue fires once per day after the configured time", () => {
 
 // ---------- Catalog and QML contracts ----------
 
-const qml = fs.readFileSync(path.join(root, "Panel.qml"), "utf8")
+const qmlFiles = fs.readdirSync(root).filter(f => f.endsWith(".qml")).sort()
+const qmlSources = Object.fromEntries(qmlFiles.map(f => [f, fs.readFileSync(path.join(root, f), "utf8")]))
+const qml = Object.values(qmlSources).join("\n")
 const en = JSON.parse(fs.readFileSync(path.join(root, "i18n", "en.json"), "utf8"))
 
-test("every key Panel.qml and Model.js use exists in en.json", () => {
+test("every key the QML and Model.js use exists in en.json", () => {
   const used = new Set()
-  for (const m of qml.matchAll(/(?:tr|strings\.tn?)\("([a-zA-Z.]+)"\s*[,)]/g)) used.add(m[1])
+  for (const m of qml.matchAll(/\.tn?\("([a-zA-Z.]+)"\s*[,)]/g)) used.add(m[1])
+  assert.ok(used.size > 50, "found only " + used.size + " keys; did the call style change?")
   for (const g of Model.SRS_GROUPS) used.add("srs." + g.key + ".short")
   for (const s of [-1, 0, 3, 6, 7, 8, 9]) used.add(Model.stageInfo(s).key)
   for (const st of [0, -1, 401, 429, 500, 404]) used.add(Model.errorInfo(st).key)
@@ -243,15 +252,27 @@ test("plural entries have the forms English needs", () => {
   }
 })
 
-test("every Text in Panel.qml renders PlainText", () => {
-  const lines = qml.split("\n")
+test("every catalog key is used", () => {
+  const dynamic = new Set(Model.SRS_GROUPS.map(g => "srs." + g.key + ".short"))
+  for (const s of [-1, 0, 3, 6, 7, 8, 9]) dynamic.add(Model.stageInfo(s).key)
+  for (const st of [0, -1, 401, 429, 500, 404]) dynamic.add(Model.errorInfo(st).key)
+  for (const k of ["now", "minutes", "hours", "hoursMinutes", "days", "daysHours"]) dynamic.add("time." + k)
+  const model = fs.readFileSync(path.join(root, "Model.js"), "utf8")
+  const unused = Object.keys(en).filter(k => !dynamic.has(k) && !qml.includes('"' + k + '"') && !model.includes('"' + k + '"'))
+  assert.deepEqual(unused, [])
+})
+
+// Text renders AutoText by default, so the only bare Text allowed is the
+// PlainText base itself; everything else builds on it.
+test("every text renders PlainText", () => {
   const offenders = []
-  lines.forEach((line, i) => {
-    if (!/(^|[\s:])Text \{/.test(line)) return
-    const block = lines.slice(i, i + 16).join("\n")
-    if (!/textFormat: Text\.PlainText/.test(block)) offenders.push(i + 1)
-  })
+  for (const [file, source] of Object.entries(qmlSources)) {
+    source.split("\n").forEach((line, i) => {
+      if (/(^|[\s:])Text \{/.test(line) && file !== "PlainText.qml") offenders.push(file + ":" + (i + 1))
+    })
+  }
   assert.deepEqual(offenders, [])
+  assert.match(qmlSources["PlainText.qml"], /textFormat: Text\.PlainText/)
 })
 
 test("animations go through Style.duration and stay within 300ms", () => {

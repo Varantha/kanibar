@@ -240,15 +240,22 @@ omarchy-shell shell rescanPlugins && omarchy plugin enable io.github.erfoip.kani
 
 node --test kanibar/test/                          # Model.js unit tests
 omarchy plugin validate "$PWD/kanibar"             # manifest schema
-qmllint -I "$OMARCHY_PATH/shell" kanibar/Panel.qml
+qmllint -I "$OMARCHY_PATH/shell" kanibar/*.qml
 omarchy restart shell                              # QML hot reload is unreliable
 ```
 
 | File | Contents |
 |---|---|
 | `manifest.json` | Plugin contract and settings schema |
-| `Panel.qml` | Bar pill, popup, settings page, API calls, reminder |
+| `Panel.qml` | Entry point: settings, state, when to fetch, popup layout |
+| `WaniKaniClient.qml` | HTTPS requests with timeout and size cap |
+| `TokenStore.qml` | Reads, saves and removes `~/.config/kanibar/token` |
+| `Reminder.qml` | Daily review reminder and its notification |
+| `BarPill.qml`, `SettingsPage.qml`, `TokenEntry.qml`, `CountTiles.qml`, `LevelProgress.qml`, `SrsBreakdown.qml`, `ReviewForecast.qml` | Views: read state, emit intent |
+| `PlainText.qml`, `CaptionText.qml`, `LinkText.qml`, `SectionHeader.qml`, `SettingRow.qml`, `StatTile.qml` | Small building blocks; all text goes through `PlainText` |
+| `Localization.qml` | Catalog lookup and number/time formatting |
 | `Model.js` | Pure parsing, validation and placeholder helpers (no QML), unit-tested in `test/` |
+| `Palette.js` | Colors derived from the bar foreground |
 | `i18n/` | Translation catalogs (`en.json`) |
 | `test/` | Unit tests, plus checks that every string exists in `en.json`, every `Text` renders plain text, and animations stay within Omarchy's motion rules |
 | `preview.png` | Marketplace preview |
