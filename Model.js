@@ -79,11 +79,24 @@ function hourlySlots(forecast, now, hours) {
   return slots
 }
 
+// Shown instead of "0" once every review is done.
+var DONE_MARK = "\uf00c"   // Nerd Font check (nf-fa-check), bolder than ✓ at bar size
+
+// The pill in two parts so the done mark can take the accent color:
+// main = review count or ✓, extra = "· <lessons>" or "".
+function barParts(state, showLessons) {
+  if (!state || state.reviews === undefined) return { main: "…", extra: "", done: false }
+  var done = state.reviews === 0
+  return {
+    main: done ? DONE_MARK : String(state.reviews),
+    extra: showLessons && state.lessons > 0 ? "· " + state.lessons : "",
+    done: done
+  }
+}
+
 function barLabel(state, showLessons) {
-  if (!state || state.reviews === undefined) return "…"
-  var text = String(state.reviews)
-  if (showLessons && state.lessons > 0) text += " · " + state.lessons
-  return text
+  var parts = barParts(state, showLessons)
+  return parts.extra ? parts.main + " " + parts.extra : parts.main
 }
 
 function relativeTime(target, now) {

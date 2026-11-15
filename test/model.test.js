@@ -57,7 +57,11 @@ test("barLabel", () => {
   assert.equal(Model.barLabel(null, true), "…")
   assert.equal(Model.barLabel({ reviews: 42, lessons: 5 }, true), "42 · 5")
   assert.equal(Model.barLabel({ reviews: 42, lessons: 5 }, false), "42")
-  assert.equal(Model.barLabel({ reviews: 0, lessons: 0 }, true), "0")
+  assert.equal(Model.barLabel({ reviews: 0, lessons: 0 }, true), Model.DONE_MARK)
+  assert.equal(Model.barLabel({ reviews: 0, lessons: 5 }, true), Model.DONE_MARK + " · 5")
+  const parts = Model.barParts({ reviews: 0, lessons: 5 }, false)
+  assert.equal(parts.done, true)
+  assert.equal(parts.extra, "")
 })
 
 test("relativeTime", () => {

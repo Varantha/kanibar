@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.erfoip.kanibar",
   "name": "Kanibar",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "erfoip",
   "license": "MIT",
   "description": "WaniKani reviews and lessons in your bar, with a popup for level progress, SRS stages, the review forecast and an optional daily reminder.",

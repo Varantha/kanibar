@@ -66,11 +66,13 @@ Panel {
   property real detailsUpdated: 0
   property int detailsLevel: 0
 
-  readonly property string pillText: {
-    if (!hasToken) return "—"
-    if (!summary) return error !== "" ? "!" : "…"
-    return Model.barLabel(summary, showLessons)
+  readonly property var pillParts: {
+    if (!hasToken) return { main: "—", extra: "", done: false }
+    if (!summary) return { main: error !== "" ? "!" : "…", extra: "", done: false }
+    return Model.barParts(summary, showLessons)
   }
+  // All reviews cleared: the pill and popup show a check in the accent color.
+  readonly property bool reviewsDone: pillParts.done === true
 
   function refresh() {
     root.now = Date.now()
@@ -411,7 +413,7 @@ Panel {
     Grid {
       id: pillContent
       anchors.centerIn: parent
-      columns: root.bar && root.bar.vertical ? 1 : 2
+      columns: root.bar && root.bar.vertical ? 1 : 3
       spacing: Style.space(4)
       verticalItemAlignment: Grid.AlignVCenter
       horizontalItemAlignment: Grid.AlignHCenter
@@ -424,7 +426,29 @@ Panel {
       }
 
       Text {
-        text: root.pillText
+        id: pillMain
+        text: root.pillParts.main
+        textFormat: Text.PlainText
+        color: root.reviewsDone ? Commons.Color.accent : button.foreground
+        font.family: button.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        font.weight: Font.DemiBold
+
+        // A small pop when the last review is cleared.
+        SequentialAnimation {
+          id: donePop
+          NumberAnimation { target: pillMain; property: "scale"; to: 1.5; duration: Style.duration(140); easing.type: Easing.OutQuad }
+          NumberAnimation { target: pillMain; property: "scale"; to: 1.0; duration: Style.duration(320); easing.type: Easing.OutBack }
+        }
+        Connections {
+          target: root
+          function onReviewsDoneChanged() { if (root.reviewsDone) donePop.restart() }
+        }
+      }
+
+      Text {
+        visible: text !== ""
+        text: root.pillParts.extra
         textFormat: Text.PlainText
         color: button.foreground
         font.family: button.fontFamily
@@ -772,8 +796,13 @@ Panel {
 
           StatTile {
             width: (parent.width - parent.spacing) / 2
-            label: "REVIEWS"
+            label: root.reviewsDone ? "ALL DONE" : "REVIEWS"
             value: root.reviews
+            valueText: root.reviewsDone ? Model.DONE_MARK : ""
+            celebrate: root.reviewsDone
+            note: root.reviewsDone && root.summary && root.summary.nextReviewsAt !== null
+              ? "Next " + Model.relativeTime(root.summary.nextReviewsAt, root.now)
+              : ""
             actionText: root.reviews > 0 ? "Start reviews" : ""
             onActivated: root.openUrl(Model.REVIEW_URL)
           }
@@ -956,14 +985,6 @@ Panel {
             text: "NEXT 24 HOURS · " + (root.summary ? root.summary.forecastTotal : 0)
           }
 
-          Text {
-            visible: root.reviews === 0 && root.summary && root.summary.nextReviewsAt !== null
-            textFormat: Text.PlainText
-            text: root.summary ? "Next reviews " + Model.relativeTime(root.summary.nextReviewsAt, root.now) : ""
-            color: body.dim
-            font.family: body.family
-            font.pixelSize: Style.font.bodySmall
-          }
 
           Row {
             id: chart
@@ -1102,6 +1123,9 @@ Panel {
     id: tile
     property string label: ""
     property int value: 0
+    property string valueText: ""   // overrides the number (e.g. ✓)
+    property bool celebrate: false  // accent-tinted tile
+    property string note: ""        // plain line under the label
     property string actionText: ""
     signal activated()
 
@@ -1114,7 +1138,7 @@ Panel {
       ? Qt.rgba(fg.r, fg.g, fg.b, 0.10)
       : Qt.rgba(fg.r, fg.g, fg.b, 0.04)
     border.width: 1
-    border.color: Qt.rgba(fg.r, fg.g, fg.b, 0.15)
+    border.color: celebrate ? Commons.Color.accent : Qt.rgba(fg.r, fg.g, fg.b, 0.15)
 
     Column {
       id: tileColumn
@@ -1124,8 +1148,8 @@ Panel {
       Text {
         anchors.horizontalCenter: parent.horizontalCenter
         textFormat: Text.PlainText
-        text: String(tile.value)
-        color: tile.value > 0 ? Commons.Color.accent : tile.fg
+        text: tile.valueText !== "" ? tile.valueText : String(tile.value)
+        color: tile.value > 0 || tile.celebrate ? Commons.Color.accent : tile.fg
         font.family: tile.family
         font.pixelSize: Style.font.display
         font.bold: true
@@ -1146,6 +1170,15 @@ Panel {
         textFormat: Text.PlainText
         text: tile.actionText + " ↗"
         color: tile.fg
+        font.family: tile.family
+        font.pixelSize: Style.font.caption
+      }
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        visible: tile.note !== ""
+        textFormat: Text.PlainText
+        text: tile.note
+        color: Qt.darker(tile.fg, 1.4)
         font.family: tile.family
         font.pixelSize: Style.font.caption
       }

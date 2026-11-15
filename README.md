@@ -5,10 +5,6 @@
 kanibar is an Omarchy shell plugin. It shows your pending WaniKani reviews and lessons in the bar. Click it for a popup with your level progress, SRS stages and the review forecast. It can also remind you in the evening if your reviews aren't done yet.
 
 <p align="center">
-  <img src="assets/bar.png" alt="kanibar in the Omarchy bar showing 49 reviews and 69 lessons" width="680">
-</p>
-
-<p align="center">
   <img src="assets/popup.png" alt="kanibar popup with review and lesson counts, level kanji progress, SRS stages and 24-hour forecast" width="360">
 </p>
 
@@ -19,7 +15,8 @@ kanibar is an Omarchy shell plugin. It shows your pending WaniKani reviews and l
   - **Review and lesson counts**, each with a link that opens your reviews or lessons on wanikani.com.
   - **Level progress:** every kanji of your current level, colored by SRS state, and a bar showing how close you are to leveling up.
   - **SRS breakdown:** Apprentice / Guru / Master / Enlightened / Burned.
-  - **24-hour review forecast**, or a countdown to your next reviews when none are due.
+  - **24-hour review forecast.**
+- **Done state:** once your reviews are cleared, the count turns into an accent-colored check.
 - **Daily reminder:** an optional notification at a time you choose, sent only if reviews are still waiting.
 - **Settings page** inside the popup, so you don't need to edit any config files.
 - **Follows your Omarchy theme**, including live theme switches.
@@ -65,7 +62,8 @@ kanibar checks the token's format, verifies it with WaniKani, and only then save
 |-------------|---------------------------------------------------------------------|
 | `鰐 49 · 69` | 49 reviews and 69 lessons available now                             |
 | `鰐 49`      | 49 reviews, with lessons hidden (or none available)                 |
-| `鰐 0`       | Nothing due                                                         |
+| `鰐 ✓`      | All reviews done. The check uses your theme's accent color and briefly pops when you clear the last review |
+| `鰐 ✓ · 69` | Reviews done, lessons still available                               |
 | `鰐 …`       | Loading for the first time                                          |
 | `鰐 !`       | The last request failed. Open the popup for details                 |
 | `鰐 —`       | Not connected yet. Click to add a token                             |
@@ -80,7 +78,10 @@ The counts refresh on an interval (see `refreshMinutes`), and again 30 seconds a
 
 ### The popup
 
-- **Reviews / Lessons:** the same counts as the pill. When there's something to do, the tile shows **Start reviews ↗** or **Start lessons ↗** and opens that session in your browser.
+- **Reviews / Lessons:** the same counts as the pill. When there's something to do, the tile shows **Start reviews ↗** or **Start lessons ↗** and opens that session in your browser. Once your reviews are cleared, the Reviews tile changes to **All done**, with an accent border and the time until your next reviews:
+
+  <p align="center"><img src="assets/done.png" alt="kanibar with all reviews done: check mark in the bar and an All done tile" width="360"></p>
+
 - **Level N kanji:** every kanji of your current level, in lesson order:
   - **Solid accent fill:** passed (reached Guru).
   - **Gray fill:** in Apprentice.
@@ -89,7 +90,7 @@ The counts refresh on an interval (see `refreshMinutes`), and again 30 seconds a
 
   Hover a kanji for its meaning and exact stage (e.g. *Apprentice 3*). The bar above fills as kanji reach Guru. The tick marks WaniKani's level-up threshold: **90% of the level's kanji at Guru**. The header shows how many are still needed.
 - **SRS stages:** how many items you have in each stage group across your whole account.
-- **Next 24 hours:** reviews unlocking each hour (hover a bar for the exact count). When nothing is due right now, a line shows when your next reviews arrive.
+- **Next 24 hours:** reviews unlocking each hour (hover a bar for the exact count).
 - **Footer:** when the data was last updated.
 
 Level progress and SRS stages are loaded only while the popup is open, and at most every two minutes. The background refresh stays small (see [API usage](#privacy-and-api-usage)).
@@ -112,7 +113,7 @@ Adds the lesson count after the reviews (`鰐 49 · 69`). Lessons are left out w
 
 #### `hideWhenIdle`: Hide when nothing is due
 *Boolean, default `false`.*
-Hides the pill while there are 0 reviews and 0 lessons, and brings it back as soon as something unlocks. Good if you only want to see kanibar when there's work to do. While it's hidden, open the popup with the command `omarchy-shell shell toggle io.github.erfoip.kanibar` (e.g. from a keybinding).
+Hides the pill while there are no reviews and no lessons (instead of showing the done check), and brings it back as soon as something unlocks. Good if you only want to see kanibar when there's work to do. While it's hidden, open the popup with the command `omarchy-shell shell toggle io.github.erfoip.kanibar` (e.g. from a keybinding).
 
 #### `highlightThreshold`: Highlight at
 *Integer 0–1000, step 10, default `0` (off).*
