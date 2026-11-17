@@ -51,8 +51,12 @@ Column {
     fontFamily: page.fontFamily
   }
 
+  // Without the cursor ring the switch drops the margin it reserves around
+  // itself for that ring, so its right edge lines up with the fields below,
+  // as in the shell's own Toggle rows.
   component PageToggle: ToggleSwitch {
     foreground: page.foreground
+    cursorRing: false
   }
 
   component PageNumber: NumberField {
