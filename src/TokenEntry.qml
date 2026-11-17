@@ -15,6 +15,7 @@ Column {
 
   property bool busy: false
   property bool rejected: false        // the saved token got a 401
+  property bool malformed: false       // the saved token isn't a valid API token
   property bool editing: false         // "Change token" was clicked
   property var error: null             // Model message or null
   property bool tokenFromSettings: false
@@ -34,7 +35,9 @@ Column {
   PlainText {
     width: parent.width
     wrapMode: Text.WordWrap
-    text: entry.rejected && !entry.editing ? entry.l10n.t("token.rejected") : entry.l10n.t("token.prompt")
+    text: entry.editing || !entry.rejected ? entry.l10n.t("token.prompt")
+      : entry.malformed ? entry.l10n.t("token.malformed")
+      : entry.l10n.t("token.rejected")
     foreground: entry.foreground
     fontFamily: entry.fontFamily
   }

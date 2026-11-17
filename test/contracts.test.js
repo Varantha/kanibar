@@ -18,7 +18,7 @@ test("every key the QML and Model.js use exists in en.json", () => {
   assert.ok(used.size > 50, "found only " + used.size + " keys; did the call style change?")
   for (const g of Model.SRS_GROUPS) used.add("srs." + g.key + ".short")
   for (const s of [-1, 0, 3, 6, 7, 8, 9]) used.add(Model.stageInfo(s).key)
-  for (const st of [0, -1, 401, 429, 500, 404]) used.add(Model.errorInfo(st).key)
+  for (const st of [0, -1, -2, 401, 429, 500, 404]) used.add(Model.errorInfo(st).key)
   for (const k of ["token.empty", "token.format"]) used.add(k)
   for (const k of ["now", "minutes", "hours", "hoursMinutes", "days", "daysHours"]) used.add("time." + k)
   const missing = [...used].filter(k => !(k in en))
@@ -36,7 +36,7 @@ test("plural entries have the forms English needs", () => {
 test("every catalog key is used", () => {
   const dynamic = new Set(Model.SRS_GROUPS.map(g => "srs." + g.key + ".short"))
   for (const s of [-1, 0, 3, 6, 7, 8, 9]) dynamic.add(Model.stageInfo(s).key)
-  for (const st of [0, -1, 401, 429, 500, 404]) dynamic.add(Model.errorInfo(st).key)
+  for (const st of [0, -1, -2, 401, 429, 500, 404]) dynamic.add(Model.errorInfo(st).key)
   for (const k of ["now", "minutes", "hours", "hoursMinutes", "days", "daysHours"]) dynamic.add("time." + k)
   const model = fs.readFileSync(path.join(src, "Model.js"), "utf8")
   const unused = Object.keys(en).filter(k => !dynamic.has(k) && !qml.includes('"' + k + '"') && !model.includes('"' + k + '"'))
@@ -65,4 +65,14 @@ test("animations go through Style.duration and stay within 300ms", () => {
     assert.ok(Number(m[1]) <= 300, "too long: " + d)
   }
   assert.doesNotMatch(qml, /OutBack|OutBounce|OutElastic|Easing\.In[A-Z]/)
+})
+
+// setSetting over IPC may write every manifest setting except the token.
+test("IPC setting keys are the manifest's settings without apiToken", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"))
+  const schemaKeys = manifest.barWidget.schema.map(s => s.key).filter(k => k !== "apiToken").sort()
+  assert.deepEqual([...Model.IPC_SETTING_KEYS].sort(), schemaKeys)
+  assert.equal(Model.ipcSettingAllowed("apiToken"), false)
+  assert.equal(Model.ipcSettingAllowed("id"), false)
+  assert.equal(Model.ipcSettingAllowed("__proto__"), false)
 })

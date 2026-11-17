@@ -69,7 +69,8 @@ Panel {
   property int detailsLevel: 0
 
   // ---------- In-popup token entry ----------
-  property bool tokenRejected: false   // last refresh got a 401
+  property bool tokenRejected: false   // last refresh got a 401 or the token is malformed
+  property bool tokenMalformed: false  // the stored token isn't a valid API token
   property bool editingToken: false    // "Change token" clicked
   property bool tokenBusy: false
   property var tokenError: null        // Model message or null
@@ -102,7 +103,8 @@ Panel {
       var userResult = results[1]
       if (summaryResult.status === 200) root.summary = Model.parseSummary(summaryResult.json, Date.now())
       if (userResult.status === 200) root.user = Model.parseUser(userResult.json)
-      if (summaryResult.status === 401 || userResult.status === 401) root.tokenRejected = true
+      root.tokenMalformed = summaryResult.status === Model.STATUS_BAD_TOKEN
+      if (Model.tokenRejected(summaryResult.status) || Model.tokenRejected(userResult.status)) root.tokenRejected = true
       else if (userResult.status === 200) root.tokenRejected = false
 
       var failed = [summaryResult, userResult].filter(function(r) { return r.status !== 200 })[0]
@@ -170,6 +172,7 @@ Panel {
       return
     }
     root.tokenRejected = false
+    root.tokenMalformed = false
     root.editingToken = false
     root.error = null
     root.refresh()
@@ -184,6 +187,7 @@ Panel {
     root.lastUpdated = 0
     root.error = null
     root.tokenRejected = false
+    root.tokenMalformed = false
     root.view = "main"
   }
 
@@ -246,6 +250,7 @@ Panel {
     //   omarchy-shell io.github.erfoip.kanibar setSetting reminderTime '"19:30"'
     // The value is JSON (true, 20, "19:30").
     function setSetting(key: string, value: string): void {
+      if (!Model.ipcSettingAllowed(key)) return
       var parsed
       try { parsed = JSON.parse(value) } catch (e) { parsed = value }
       root.persistSetting(key, parsed)
@@ -435,6 +440,7 @@ Panel {
           fontFamily: body.family
           busy: root.tokenBusy
           rejected: root.tokenRejected
+          malformed: root.tokenMalformed
           editing: root.editingToken
           error: root.tokenError
           tokenFromSettings: root.settingsToken !== ""

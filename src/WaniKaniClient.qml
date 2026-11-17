@@ -13,6 +13,12 @@ QtObject {
   // Runs `callback` exactly once. `tokenOverride` checks a token that isn't
   // saved yet.
   function get(path, callback, tokenOverride) {
+    var token = tokenOverride || client.token
+    if (!Model.isValidToken(token)) {
+      // Still asynchronous, like every other outcome.
+      Qt.callLater(function() { callback(Model.STATUS_BAD_TOKEN, null) })
+      return
+    }
     var finished = false
     var xhr = new XMLHttpRequest()
     var timer = timeoutTimer.createObject(client, { interval: Model.REQUEST_TIMEOUT_MS })
@@ -44,7 +50,7 @@ QtObject {
       finish(status, json)
     }
     xhr.open("GET", Model.API_BASE + path)
-    xhr.setRequestHeader("Authorization", "Bearer " + (tokenOverride || client.token))
+    xhr.setRequestHeader("Authorization", "Bearer " + token)
     xhr.setRequestHeader("Wanikani-Revision", Model.API_REVISION)
     xhr.send()
     timer.start()

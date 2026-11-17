@@ -52,6 +52,7 @@
 
   "token.prompt": "Paste a read-only WaniKani API token to connect:",
   "token.rejected": "WaniKani rejected the saved token. Paste a new one:",
+  "token.malformed": "The saved token isn't a valid WaniKani API token. Paste a new one:",
   "token.connect": "Connect",
   "token.checking": "Checking…",
   "token.empty": "Paste your token first.",

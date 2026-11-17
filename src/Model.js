@@ -39,6 +39,7 @@ var MAX_RESPONSE_CHARS = 2 * 1024 * 1024
 // Pseudo-statuses for failures that never got an HTTP status.
 var STATUS_OFFLINE = 0        // network error or timeout
 var STATUS_TOO_LARGE = -1     // response exceeded MAX_RESPONSE_CHARS
+var STATUS_BAD_TOKEN = -2     // stored token isn't a valid API token; nothing was sent
 
 // ---------- Validation ----------
 // Everything from the API is untrusted: numbers are clamped to sane ranges,
@@ -225,6 +226,7 @@ function message(key, arg) {
 
 function errorInfo(status) {
   if (status === STATUS_TOO_LARGE) return message("error.tooLarge")
+  if (status === STATUS_BAD_TOKEN) return message("token.format")
   if (status === STATUS_OFFLINE) return message("error.offline")
   if (status === 401) return message("error.token")
   if (status === 429) return message("error.rateLimited")
@@ -235,6 +237,18 @@ function errorInfo(status) {
 // API v2 tokens are UUIDs. Catches pasting the wrong thing (e.g. a v1 key or
 // a URL) before bothering the API. Returns an i18n key, or "" if it looks fine.
 var TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// Exactly a token, nothing around or inside it. Checked right before every
+// request, so a malformed stored value (e.g. one with line breaks) can never
+// end up in the Authorization header.
+function isValidToken(token) {
+  return typeof token === "string" && TOKEN_PATTERN.test(token)
+}
+
+// The token needs replacing: WaniKani refused it, or it was never valid.
+function tokenRejected(status) {
+  return status === 401 || status === STATUS_BAD_TOKEN
+}
 
 function tokenProblem(token) {
   var trimmed = String(token || "").trim()
@@ -348,6 +362,17 @@ function intSetting(value, fallback, min, max) {
 // The reminder time as shown in its text field.
 function clockText(value) {
   return String(value === undefined || value === null ? DEFAULT_REMINDER_TIME : value).slice(0, 5)
+}
+
+// Keys the setSetting IPC call may write: the manifest's settings, except
+// apiToken, which only goes through the popup's validated token flow.
+var IPC_SETTING_KEYS = [
+  "refreshMinutes", "showLessons", "hideWhenIdle", "highlightThreshold",
+  "reminderEnabled", "reminderTime", "reminderMinReviews"
+]
+
+function ipcSettingAllowed(key) {
+  return IPC_SETTING_KEYS.indexOf(key) !== -1
 }
 
 // ---------- Daily review reminder ----------

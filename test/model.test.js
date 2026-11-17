@@ -146,6 +146,18 @@ test("errorInfo maps statuses to catalog keys", () => {
   assert.deepEqual(plain(Model.errorInfo(404)), { key: "error.generic", arg: "404" })
 })
 
+test("isValidToken accepts exactly one token", () => {
+  assert.equal(Model.isValidToken("8f2b1c3a-1234-4abc-9def-0123456789ab"), true)
+  assert.equal(Model.isValidToken(" 8f2b1c3a-1234-4abc-9def-0123456789ab"), false)
+  assert.equal(Model.isValidToken("8f2b1c3a-1234-4abc-9def-0123456789ab\r\nX-Evil: 1"), false)
+  assert.equal(Model.isValidToken(""), false)
+  assert.equal(Model.isValidToken(null), false)
+  assert.equal(Model.errorInfo(Model.STATUS_BAD_TOKEN).key, "token.format")
+  assert.equal(Model.tokenRejected(401), true)
+  assert.equal(Model.tokenRejected(Model.STATUS_BAD_TOKEN), true)
+  assert.equal(Model.tokenRejected(Model.STATUS_OFFLINE), false)
+})
+
 test("tokenProblem", () => {
   assert.equal(Model.tokenProblem("  8f2b1c3a-1234-4abc-9def-0123456789ab \n"), "")
   assert.equal(Model.tokenProblem(""), "token.empty")
