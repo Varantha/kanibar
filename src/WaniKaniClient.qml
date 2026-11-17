@@ -1,59 +1,69 @@
 import QtQuick
+import Quickshell.Io
 import "Model.js" as Model
 
-// GET requests against the fixed WaniKani API base. XMLHttpRequest keeps the
-// token out of process argv (unlike curl). Fails closed on timeout,
-// oversized or non-JSON responses. Callbacks get (status, json), where
-// status is the HTTP status or one of Model's pseudo-statuses.
+// GET requests against the fixed WaniKani API base, through curl (see
+// Model.curlCommand for why not XMLHttpRequest). The token reaches curl on
+// stdin, never argv. No redirects are followed, only HTTPS is allowed, and
+// requests fail closed on timeout, oversized or non-JSON responses.
+// Callbacks get (status, json), where status is the HTTP status or one of
+// Model's pseudo-statuses.
 QtObject {
   id: client
 
   property string token: ""
 
-  // Runs `callback` exactly once. `tokenOverride` checks a token that isn't
-  // saved yet.
+  // Runs `callback` exactly once, always asynchronously. `tokenOverride`
+  // checks a token that isn't saved yet.
   function get(path, callback, tokenOverride) {
     var token = tokenOverride || client.token
     if (!Model.isValidToken(token)) {
-      // Still asynchronous, like every other outcome.
       Qt.callLater(function() { callback(Model.STATUS_BAD_TOKEN, null) })
       return
     }
+
+    var proc = curlProcess.createObject(client, { command: Model.curlCommand(Model.API_BASE + path) })
+    // Backstop in case curl never starts or never exits; curl's own
+    // --max-time normally ends the request first.
+    var backstop = backstopTimer.createObject(client, { interval: Model.REQUEST_TIMEOUT_MS + 5 * Model.SECOND_MS })
+    var output = null
+    var exitCode = null
     var finished = false
-    var xhr = new XMLHttpRequest()
-    var timer = timeoutTimer.createObject(client, { interval: Model.REQUEST_TIMEOUT_MS })
 
     function finish(status, json) {
       if (finished) return
       finished = true
-      if (timer) { timer.stop(); timer.destroy() }
+      backstop.stop()
+      backstop.destroy()
+      if (proc.running) proc.running = false
+      proc.destroy()
       callback(status, json)
     }
 
-    // finish() before abort(): abort() re-enters onreadystatechange
-    // synchronously, and that pass must not report its own result.
-    function failWith(status) {
-      finish(status, null)
-      xhr.abort()
+    // curl is done once it exited and its output is collected, in either
+    // order.
+    function settle() {
+      if (output === null || exitCode === null) return
+      var result = Model.parseCurlResult(exitCode, output)
+      finish(result.status, result.json)
     }
 
-    timer.triggered.connect(function() { failWith(Model.STATUS_OFFLINE) })
-    xhr.onreadystatechange = function() {
-      if (finished) return
-      if (xhr.readyState >= XMLHttpRequest.LOADING && xhr.responseText.length > Model.MAX_RESPONSE_CHARS) {
-        failWith(Model.STATUS_TOO_LARGE)
-        return
-      }
-      if (xhr.readyState !== XMLHttpRequest.DONE) return
-      var json = parseJsonObject(xhr.responseText)
-      var status = xhr.status === 200 && json === null ? Model.STATUS_OFFLINE : xhr.status
-      finish(status, json)
-    }
-    xhr.open("GET", Model.API_BASE + path)
-    xhr.setRequestHeader("Authorization", "Bearer " + token)
-    xhr.setRequestHeader("Wanikani-Revision", Model.API_REVISION)
-    xhr.send()
-    timer.start()
+    proc.started.connect(function() {
+      proc.write(Model.authorizationHeader(token))
+      proc.stdinEnabled = false   // EOF: curl reads the header file to the end
+    })
+    proc.collector.streamFinished.connect(function() {
+      output = proc.collector.text
+      settle()
+    })
+    proc.exited.connect(function(code) {
+      exitCode = code
+      settle()
+    })
+    backstop.triggered.connect(function() { finish(Model.STATUS_OFFLINE, null) })
+
+    backstop.start()
+    proc.running = true
   }
 
   // Requests every path in parallel and calls `callback` once with an array
@@ -69,16 +79,15 @@ QtObject {
     })
   }
 
-  function parseJsonObject(text) {
-    try {
-      var json = JSON.parse(text)
-      return json !== null && typeof json === "object" ? json : null
-    } catch (e) {
-      return null
+  property Component curlProcess: Component {
+    Process {
+      property alias collector: collector
+      stdinEnabled: true
+      stdout: StdioCollector { id: collector }
     }
   }
 
-  property Component timeoutTimer: Component {
+  property Component backstopTimer: Component {
     Timer { repeat: false }
   }
 }

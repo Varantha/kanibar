@@ -41,6 +41,66 @@ var STATUS_OFFLINE = 0        // network error or timeout
 var STATUS_TOO_LARGE = -1     // response exceeded MAX_RESPONSE_CHARS
 var STATUS_BAD_TOKEN = -2     // stored token isn't a valid API token; nothing was sent
 
+// ---------- Transport ----------
+// Requests go through curl rather than XMLHttpRequest: Qt's XHR follows
+// redirects to other hosts and sends the Authorization header along, and
+// QML can't turn that off. curl follows no redirects unless asked to.
+var CURL_EXIT_TIMEOUT = 28
+var CURL_EXIT_TOO_LARGE = 63
+var CONNECT_TIMEOUT_SECONDS = 10
+
+// The curl argv for one GET. The Authorization header is not in it: curl
+// reads it from stdin (--header @-), so the token never shows up in the
+// process list. --disable must come first and skips ~/.curlrc, which could
+// otherwise turn on --location. --proto =https refuses anything but HTTPS.
+// The body is followed by a newline and the HTTP status.
+function curlCommand(url) {
+  return [
+    "curl", "--disable",
+    "--silent", "--show-error",
+    "--proto", "=https",
+    "--max-redirs", "0",
+    "--connect-timeout", String(CONNECT_TIMEOUT_SECONDS),
+    "--max-time", String(REQUEST_TIMEOUT_MS / SECOND_MS),
+    "--max-filesize", String(MAX_RESPONSE_CHARS),
+    "--header", "@-",
+    "--header", "Wanikani-Revision: " + API_REVISION,
+    "--write-out", "\n%{http_code}",
+    "--url", url
+  ]
+}
+
+function parseJsonObject(text) {
+  try {
+    var json = JSON.parse(text)
+    return json !== null && typeof json === "object" ? json : null
+  } catch (e) {
+    return null
+  }
+}
+
+// curl's exit code and stdout → { status, json }. Fails closed: anything
+// unexpected is STATUS_OFFLINE, and a 200 without a JSON object is too.
+function parseCurlResult(exitCode, output) {
+  var failed = { status: STATUS_OFFLINE, json: null }
+  if (exitCode === CURL_EXIT_TOO_LARGE) return { status: STATUS_TOO_LARGE, json: null }
+  if (exitCode !== 0) return failed
+  var text = String(output || "")
+  var cut = text.lastIndexOf("\n")
+  if (cut < 0) return failed
+  var status = /^\d{3}$/.test(text.slice(cut + 1)) ? Number(text.slice(cut + 1)) : 0
+  if (status < 100 || status > 599) return failed
+  var body = text.slice(0, cut)
+  if (body.length > MAX_RESPONSE_CHARS) return { status: STATUS_TOO_LARGE, json: null }
+  var json = parseJsonObject(body)
+  if (status === 200 && json === null) return failed
+  return { status: status, json: json }
+}
+
+function authorizationHeader(token) {
+  return "Authorization: Bearer " + token + "\n"
+}
+
 // ---------- Validation ----------
 // Everything from the API is untrusted: numbers are clamped to sane ranges,
 // strings are cut to a maximum length and stripped of control characters.

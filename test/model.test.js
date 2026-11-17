@@ -146,6 +146,38 @@ test("errorInfo maps statuses to catalog keys", () => {
   assert.deepEqual(plain(Model.errorInfo(404)), { key: "error.generic", arg: "404" })
 })
 
+// ---------- Transport ----------
+
+test("curlCommand keeps the token out of argv and redirects off", () => {
+  const url = "https://api.wanikani.com/v2/user"
+  const args = Model.curlCommand(url)
+  assert.deepEqual(plain(args.slice(0, 2)), ["curl", "--disable"])     // --disable only works first
+  assert.equal(args[args.indexOf("--proto") + 1], "=https")
+  assert.equal(args[args.indexOf("--max-redirs") + 1], "0")
+  assert.equal(args.indexOf("--location"), -1)
+  assert.equal(args.indexOf("-L"), -1)
+  assert.equal(args[args.indexOf("--header") + 1], "@-")
+  assert.deepEqual(plain(args.slice(-2)), ["--url", url])
+  assert.ok(!args.some(a => /authorization|bearer/i.test(a)), "no credentials in argv")
+  assert.equal(Model.authorizationHeader("abc"), "Authorization: Bearer abc\n")
+})
+
+test("parseCurlResult fails closed", () => {
+  assert.deepEqual(plain(Model.parseCurlResult(0, '{"data":{}}\n200')), { status: 200, json: { data: {} } })
+  assert.deepEqual(plain(Model.parseCurlResult(0, '{"error":"x"}\n401')), { status: 401, json: { error: "x" } })
+  assert.equal(Model.parseCurlResult(0, "\n302").status, 302)                     // redirect not followed
+  assert.equal(Model.parseCurlResult(0, "<html>\n200").status, Model.STATUS_OFFLINE) // 200 without JSON
+  assert.equal(Model.parseCurlResult(0, "[1,2]\n200").status, 200)                // arrays are objects
+  assert.equal(Model.parseCurlResult(0, '"str"\n200').status, Model.STATUS_OFFLINE)
+  assert.equal(Model.parseCurlResult(0, "{}\nabc").status, Model.STATUS_OFFLINE)
+  assert.equal(Model.parseCurlResult(0, "{}").status, Model.STATUS_OFFLINE)        // no status line
+  assert.equal(Model.parseCurlResult(0, "").status, Model.STATUS_OFFLINE)
+  assert.equal(Model.parseCurlResult(28, "").status, Model.STATUS_OFFLINE)         // timeout
+  assert.equal(Model.parseCurlResult(7, "").status, Model.STATUS_OFFLINE)          // can't connect
+  assert.equal(Model.parseCurlResult(63, "").status, Model.STATUS_TOO_LARGE)       // --max-filesize
+  assert.equal(Model.parseCurlResult(0, "x".repeat(Model.MAX_RESPONSE_CHARS + 1) + "\n200").status, Model.STATUS_TOO_LARGE)
+})
+
 test("isValidToken accepts exactly one token", () => {
   assert.equal(Model.isValidToken("8f2b1c3a-1234-4abc-9def-0123456789ab"), true)
   assert.equal(Model.isValidToken(" 8f2b1c3a-1234-4abc-9def-0123456789ab"), false)
