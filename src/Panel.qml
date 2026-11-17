@@ -328,7 +328,9 @@ Panel {
       anchors.centerIn: parent
       vertical: root.barVertical
       parts: root.pillParts
-      foreground: button.foreground
+      // WidgetButton's `active` only recolors its own label, which is hidden
+      // here, so the pill takes the urgent color itself.
+      foreground: button.active ? button.activeColor : button.foreground
       fontFamily: button.fontFamily
     }
   }
