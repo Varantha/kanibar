@@ -72,15 +72,41 @@ test("a symlink at the token path is replaced, its target untouched", () => {
   assert.equal(fs.readFileSync(target, "utf8"), "KEEP\n")
 })
 
-test("a failed save keeps the old token and leaves no temp file", () => {
+// The temp file is reopened by name, so nobody else may be able to add or
+// remove entries in the directory while the token is written.
+test("an existing directory others can write to is made private first", () => {
   const dir = scratch()
-  fs.writeFileSync(path.join(dir, "token"), "KEEP\n", { mode: 0o600 })
-  fs.chmodSync(dir, 0o500)
-  try {
-    assert.throws(() => save(dir, TOKEN))
-    assert.equal(fs.readFileSync(path.join(dir, "token"), "utf8"), "KEEP\n")
-    assert.deepEqual(fs.readdirSync(dir), ["token"])
-  } finally {
-    fs.chmodSync(dir, 0o700)
-  }
+  fs.chmodSync(dir, 0o777)
+
+  save(dir, TOKEN)
+
+  assert.equal(mode(dir), 0o700)
+  assert.equal(mode(path.join(dir, "token")), 0o600)
+  assert.equal(fs.readFileSync(path.join(dir, "token"), "utf8"), TOKEN + "\n")
+})
+
+test("a symlinked token directory is refused and its target untouched", () => {
+  const base = scratch()
+  const real = path.join(base, "real")
+  fs.mkdirSync(real)
+  fs.chmodSync(real, 0o777)
+  const link = path.join(base, "kanibar")
+  fs.symlinkSync(real, link)
+
+  assert.throws(() => save(link, TOKEN))
+  assert.equal(mode(real), 0o777)
+  assert.deepEqual(fs.readdirSync(real), [])
+})
+
+// A directory at the token path makes the rename fail (mv -T) instead of
+// moving the token inside it.
+test("a failed save leaves no temp file and nothing inside a token directory", () => {
+  const dir = scratch()
+  const tokenDir = path.join(dir, "token")
+  fs.mkdirSync(tokenDir)
+  fs.writeFileSync(path.join(tokenDir, "keep"), "KEEP\n")
+
+  assert.throws(() => save(dir, TOKEN))
+  assert.deepEqual(fs.readdirSync(dir), ["token"])
+  assert.deepEqual(fs.readdirSync(tokenDir), ["keep"])
 })

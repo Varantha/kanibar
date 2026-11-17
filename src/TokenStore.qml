@@ -36,22 +36,31 @@ Item {
     store.saved(ok)
   }
 
-  // Never writes into an existing token file: its mode might let other
-  // accounts read it, and a reader that opened it earlier keeps access.
-  // Instead the token goes into a new file created private (0600) next to
-  // it, which then replaces the old one with an atomic rename. The rename
-  // also replaces a symlink at that path rather than writing through it.
-  // The token travels over stdin, never argv, so it doesn't show up in the
-  // process list.
+  // First makes sure the token directory is ours and private: it must be a
+  // real directory (not a symlink) owned by us, and is set to 0700. The
+  // temp file below is reopened by name, so another account that could add
+  // or remove entries in the directory could otherwise swap in its own file
+  // and receive the token. mkdir -p leaves an existing directory's mode as
+  // it was, so this can't rely on umask.
+  //
+  // Never writes into an existing token file either: its mode might let
+  // other accounts read it, and a reader that opened it earlier keeps
+  // access. Instead the token goes into a new file created private (0600)
+  // next to it, which then replaces the old one with an atomic rename. The
+  // rename also replaces a symlink at that path rather than writing through
+  // it. The token travels over stdin, never argv, so it doesn't show up in
+  // the process list.
   readonly property string saveScript: [
     "umask 077",
     "mkdir -p \"$1\" || exit 1",
+    "[ -d \"$1\" ] && [ ! -L \"$1\" ] && [ -O \"$1\" ] || exit 1",
+    "chmod 700 \"$1\" || exit 1",
     "tmp=$(mktemp \"$1/.token.XXXXXX\") || exit 1",
     "trap 'rm -f \"$tmp\"' EXIT",
     "chmod 600 \"$tmp\" || exit 1",
     "IFS= read -r t || exit 1",
     "printf '%s\\n' \"$t\" > \"$tmp\" || exit 1",
-    "mv -f \"$tmp\" \"$1/token\" || exit 1",
+    "mv -fT \"$tmp\" \"$1/token\" || exit 1",
     "trap - EXIT"
   ].join("\n")
 

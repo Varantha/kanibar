@@ -209,7 +209,7 @@ Only English ships so far. Translations are welcome:
 ## Privacy and API usage
 
 - **Read-only.** kanibar only reads from the API. It can't start lessons, submit reviews or change settings on your account.
-- **Token storage.** The token is saved to `~/.config/kanibar/token` with mode 600, written through stdin so it never appears in the process list. A new token goes into a fresh private file that atomically replaces the old one, so it is never written into an existing file that others might be able to read. It's sent only to `api.wanikani.com`.
+- **Token storage.** The token is saved to `~/.config/kanibar/token` with mode 600, written through stdin so it never appears in the process list. Before saving, kanibar checks that `~/.config/kanibar` is a real directory you own and sets it to mode 700. A new token then goes into a fresh private file that atomically replaces the old one, so it is never written into an existing file, or a directory, that others might be able to read or change. It's sent only to `api.wanikani.com`.
 - **Defensive by default.** Every request goes to the fixed HTTPS address `api.wanikani.com`, gives up after 15 seconds, and is dropped if the response exceeds 2 MB. Data from the API is validated before use: counts are kept within sane ranges, lists are capped, and text such as usernames and kanji meanings is length-limited and always shown as plain text, never interpreted as markup.
 - **Requests.**
   - **Background refresh:** 2 requests (`/summary`, `/user`) every `refreshMinutes` and after each full hour. You can turn this off.
