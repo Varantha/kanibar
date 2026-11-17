@@ -56,7 +56,8 @@ Panel {
 
   readonly property int reviews: summary ? summary.reviews : 0
   readonly property int lessons: summary ? summary.lessons : 0
-  readonly property bool idle: summary !== null && reviews === 0 && lessons === 0
+  // Nothing the bar would show besides the done check (hideWhenIdle hides it).
+  readonly property bool idle: Model.idle(summary, showLessons)
 
   // ---------- Popup details: SRS breakdown + level progress ----------
   // Fetched only while the popup is open, at most every DETAILS_MAX_AGE_MS,

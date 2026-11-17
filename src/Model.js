@@ -182,6 +182,15 @@ function barParts(state, showLessons, formatNumber) {
   }
 }
 
+// Nothing to do as far as the bar shows: no reviews, and no lessons either,
+// or lessons hidden from the bar. This is exactly when the pill would show
+// the bare done check, which hideWhenIdle replaces by hiding the pill.
+// Unknown counts (loading, failed) are never idle.
+function idle(state, showLessons) {
+  if (!state || state.reviews === undefined) return false
+  return state.reviews === 0 && !(showLessons && state.lessons > 0)
+}
+
 // ---------- Time ----------
 // Time until `target`, split for translation: kind is one of
 // "none", "now", "minutes", "hours", "hoursMinutes", "days", "daysHours".

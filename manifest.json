@@ -57,7 +57,7 @@
         "type": "boolean",
         "label": "Hide when nothing is due",
         "defaultValue": false,
-        "description": "Hide the bar pill while there are no reviews or lessons available."
+        "description": "Hide the bar pill while it would only show the done check: no reviews, and no lessons or lessons hidden from the bar."
       },
       {
         "key": "highlightThreshold",

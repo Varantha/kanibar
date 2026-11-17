@@ -104,6 +104,21 @@ test("barParts", () => {
   assert.deepEqual(plain(Model.barParts({ reviews: 1234, lessons: 5 }, true, (n) => "#" + n)), { main: "#1234", extra: "· #5", done: false })
 })
 
+test("idle follows what the pill shows", () => {
+  assert.equal(Model.idle(null, true), false)                         // loading or failed
+  assert.equal(Model.idle({ reviews: 3, lessons: 0 }, true), false)
+  assert.equal(Model.idle({ reviews: 0, lessons: 0 }, true), true)
+  assert.equal(Model.idle({ reviews: 0, lessons: 5 }, true), false)   // "✓ · 5" stays
+  assert.equal(Model.idle({ reviews: 0, lessons: 5 }, false), true)   // lessons hidden: bare check
+  // Idle exactly when the pill would be the bare check.
+  for (const state of [{ reviews: 0, lessons: 0 }, { reviews: 0, lessons: 5 }, { reviews: 2, lessons: 5 }]) {
+    for (const showLessons of [true, false]) {
+      const parts = Model.barParts(state, showLessons)
+      assert.equal(Model.idle(state, showLessons), parts.done && parts.extra === "")
+    }
+  }
+})
+
 // ---------- Time ----------
 
 test("duration splits time for translation", () => {

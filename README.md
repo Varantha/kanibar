@@ -65,7 +65,7 @@ kanibar checks the token's format, verifies it with WaniKani, and only then save
 | `鰐 49 · 69` | 49 reviews and 69 lessons available now                             |
 | `鰐 49`      | 49 reviews, with lessons hidden (`showLessons` off) or none available |
 | `鰐 ✓ · 69`  | All reviews done, lessons still available. The check uses your theme's accent color, matches the digits' height, and briefly pops when you clear the last review |
-| `鰐 ✓`       | All reviews and lessons done (hidden instead if `hideWhenIdle` is on) |
+| `鰐 ✓`       | All reviews done, and no lessons or lessons hidden (the pill hides instead if `hideWhenIdle` is on) |
 | `鰐 …`       | Loading for the first time                                          |
 | `鰐 !`       | The last request failed. Open the popup for details                 |
 | `鰐 —`       | Not connected yet. Click to add a token                             |
@@ -115,7 +115,7 @@ Adds the lesson count after the reviews (`鰐 49 · 69`). Lessons are left out w
 
 #### `hideWhenIdle`: Hide when nothing is due
 *Boolean, default `false`.*
-Hides the pill while there are no reviews and no lessons (instead of showing the done check), and brings it back as soon as something unlocks. Good if you only want to see kanibar when there's work to do. While it's hidden, open the popup with the command `omarchy-shell shell toggle io.github.erfoip.kanibar` (e.g. from a keybinding).
+Hides the pill whenever it would only show the done check: no reviews, and either no lessons or lessons hidden with `showLessons` off. It comes back as soon as something it would show unlocks. Good if you only want to see kanibar when there's work to do. While it's hidden, open the popup with the command `omarchy-shell shell toggle io.github.erfoip.kanibar` (e.g. from a keybinding).
 
 #### `highlightThreshold`: Highlight at
 *Integer 0–1000, step 10, default `0` (off).*
