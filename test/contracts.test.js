@@ -77,19 +77,35 @@ test("IPC setting keys are the manifest's settings without apiToken", () => {
   assert.equal(Model.ipcSettingAllowed("__proto__"), false)
 })
 
-// Account isolation: every writable property in Panel.qml's account block
-// must be cleared by resetAccount(), which runs whenever the active token
-// changes or is removed.
+// Account isolation: every writable property in Service.qml's account
+// block must be cleared by resetAccount(), which runs whenever the active
+// token changes or is removed.
 test("resetAccount clears every account-scoped property", () => {
-  const panel = qmlSources["Panel.qml"]
-  const block = panel.slice(panel.indexOf("// ---------- State ----------"), panel.indexOf("// ---------- End of account state ----------"))
+  const service = qmlSources["Service.qml"]
+  const block = service.slice(service.indexOf("// ---------- State ----------"), service.indexOf("// ---------- End of account state ----------"))
   const props = [...block.matchAll(/^\s*property \S+ (\w+):/gm)].map(m => m[1])
   assert.ok(props.length >= 10, "account block not found or too small: " + props)
-  const reset = panel.slice(panel.indexOf("function resetAccount()"), panel.indexOf("function tokenDisconnected()"))
+  const reset = service.slice(service.indexOf("function resetAccount()"), service.indexOf("function tokenDisconnected()"))
   assert.ok(reset.length > 0 && reset.length < 1500, "resetAccount() not found")
-  const missing = props.filter(p => !new RegExp("root\\." + p + " = ").test(reset))
+  const missing = props.filter(p => !new RegExp("service\\." + p + " = ").test(reset))
   assert.deepEqual(missing, [])
-  assert.match(panel, /onApiTokenChanged: \{\s*root\.resetAccount\(\)/)
+  assert.match(service, /onApiTokenChanged: \{\s*service\.resetAccount\(\)/)
+})
+
+// Omarchy creates the bar widget once per monitor but mounts one service per
+// plugin. Anything that must exist once (token, requests, reminder) has to
+// live in the service, never in Panel, or two screens could undo each
+// other's Disconnect and double every request and reminder.
+test("account components exist once, in the service", () => {
+  const panel = qmlSources["Panel.qml"]
+  for (const type of ["WaniKaniClient", "TokenStore", "TokenSession", "Reminder"]) {
+    assert.doesNotMatch(panel, new RegExp("^\\s*" + type + " \\{", "m"), "Panel must not create a " + type)
+    assert.match(qmlSources["Service.qml"], new RegExp("^\\s*" + type + " \\{", "m"), "Service must create the " + type)
+  }
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"))
+  assert.ok(manifest.kinds.includes("service"))
+  assert.equal(manifest.entryPoints.service, "src/Service.qml")
+  assert.match(panel, /serviceFor\(Model\.PLUGIN_ID\)/)
 })
 
 test("the client drops results from a previous token", () => {
@@ -105,7 +121,7 @@ test("the client drops results from a previous token", () => {
 test("a failed delete is reported, not treated as a disconnect", () => {
   const store = qmlSources["TokenStore.qml"]
   assert.match(store, /onExited: function\(exitCode\) \{ store\.finishRemove\(exitCode === 0\) \}/)
-  assert.match(store, /if \(ok\) store\.token = ""/)
+  assert.match(store, /if \(ok\) \{\s+store\.discardPendingRead\(\)\s+store\.token = ""/)
   // A removal during a save waits for it. This must use the store's own flag:
   // Process.running is still false right after a process is asked to start.
   assert.match(store, /function remove\(\) \{\s+if \(store\.saving\) \{\s+store\.removeQueued = true/)

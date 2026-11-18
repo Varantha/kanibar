@@ -8,9 +8,11 @@
   "description": "WaniKani reviews and lessons in your bar, with a popup for level progress, SRS stages, the review forecast and an optional daily reminder.",
   "homepage": "https://github.com/erfoip/kanibar",
   "kinds": [
+    "service",
     "bar-widget"
   ],
   "entryPoints": {
+    "service": "src/Service.qml",
     "barWidget": "src/Panel.qml"
   },
   "barWidget": {

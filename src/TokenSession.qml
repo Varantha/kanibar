@@ -35,6 +35,11 @@ Item {
   // abandoned.
   property int flow: 0
   property int savingFlow: -1
+  // Bumped whenever a pasted token must leave the entry field: after it
+  // connected, on Cancel, after Disconnect and when the popup closes. The
+  // field outlives the popup, so otherwise a pasted token would stay there,
+  // ready to reconnect with one click.
+  property int clearCount: 0
 
   readonly property bool busy: phase !== "idle"
   readonly property bool canCancel: phase !== "saving"
@@ -83,6 +88,7 @@ Item {
     session.phase = "idle"
     session.error = null
     session.editing = false
+    session.clearCount++
     return true
   }
 
@@ -101,6 +107,7 @@ Item {
     session.editing = false
     session.error = null
     session.accountError = null
+    session.clearCount++
   }
 
   function clearError() {
@@ -119,6 +126,7 @@ Item {
         return
       }
       session.editing = false
+      session.clearCount++
       session.connected()
     }
 
@@ -128,6 +136,7 @@ Item {
         session.accountError = Model.message("settings.disconnectFailed", session.store.displayPath)
         return
       }
+      session.clearCount++
       session.disconnected()
     }
   }

@@ -10,9 +10,12 @@ import "Model.js" as Model
 // with level progress, SRS stages and the 24-hour forecast. Data comes from
 // the official WaniKani API v2.
 //
-// This file owns the settings and state, decides when to fetch, and lays
-// out the popup. The views next to it read state and emit intent;
-// WaniKaniClient, TokenStore and Reminder do the I/O.
+// Omarchy creates this widget once per monitor. The account itself (token,
+// data, refreshes, reminder) lives once in Service.qml; this file is one
+// screen's view onto it: it hands the service its settings, mirrors the
+// service's state for the popup, and owns only per-screen things such as
+// the open popup's page and clock. The views next to it read state and emit
+// intent.
 //
 // Safety notes (see Omarchy's plugin guide):
 // - Every text goes through PlainText; test/contracts.test.js enforces it.
@@ -28,65 +31,64 @@ Panel {
   manageIpc: false
 
   Localization { id: strings }
-  WaniKaniClient { id: apiClient; token: root.apiToken }
 
-  // ---------- Settings ----------
-  readonly property string settingsToken: String(setting("apiToken", "") || "").trim()
-  readonly property string apiToken: settingsToken !== "" ? settingsToken : tokenStore.token
-  readonly property bool hasToken: apiToken !== ""
-  // 0 turns background refresh off (popup open and middle-click still refresh).
-  readonly property int refreshMinutes: Model.intSetting(setting("refreshMinutes", Model.DEFAULT_REFRESH_MINUTES),
-                                                         Model.DEFAULT_REFRESH_MINUTES, 0, Model.MAX_REFRESH_MINUTES)
-  readonly property bool autoRefresh: refreshMinutes > 0
+  // ---------- The shared service ----------
+  // null for a moment at startup, until the shell has mounted it.
+  readonly property var service: root.bar && root.bar.shell && typeof root.bar.shell.serviceFor === "function"
+    ? root.bar.shell.serviceFor(Model.PLUGIN_ID) : null
+  readonly property bool ready: service !== null
+
+  // Every screen's widget shares one shell.json entry; any of them can hand
+  // it over.
+  function pushSettings() {
+    if (root.service && root.settings && Object.keys(root.settings).length > 0) root.service.settings = root.settings
+  }
+  onServiceChanged: pushSettings()
+  onSettingsChanged: pushSettings()
+
+  readonly property var tokenStore: ready ? service.tokenStore : null
+  readonly property var tokenSession: ready ? service.tokenSession : null
+  readonly property var reminder: ready ? service.reminder : null
+
+  // ---------- Account state, from the service ----------
+  readonly property string settingsToken: ready ? service.settingsToken : ""
+  readonly property bool hasToken: ready && service.hasToken
+  readonly property var summary: ready ? service.summary : null
+  readonly property var user: ready ? service.user : null
+  readonly property var error: ready ? service.error : null
+  readonly property bool loading: ready && service.loading
+  readonly property real lastUpdated: ready ? service.lastUpdated : 0
+  readonly property var srsCounts: ready ? service.srsCounts : null
+  readonly property var levelInfo: ready ? service.levelInfo : null
+  readonly property bool tokenRejected: ready && service.tokenRejected
+  readonly property bool tokenMalformed: ready && service.tokenMalformed
+  readonly property int reviews: summary ? summary.reviews : 0
+  readonly property int lessons: summary ? summary.lessons : 0
+
+  // ---------- Display settings (this screen) ----------
+  readonly property int refreshMinutes: ready ? service.refreshMinutes : Model.DEFAULT_REFRESH_MINUTES
   readonly property bool showLessons: setting("showLessons", true) === true
   readonly property bool hideWhenIdle: setting("hideWhenIdle", false) === true
   readonly property int highlightThreshold: Model.intSetting(setting("highlightThreshold", 0), 0, 0)
-  readonly property bool reminderEnabled: setting("reminderEnabled", false) === true
-  readonly property string reminderTime: Model.clockText(setting("reminderTime", Model.DEFAULT_REMINDER_TIME))
-  readonly property int reminderMinReviews: Model.intSetting(setting("reminderMinReviews", 1), 1, 1)
+  readonly property bool reminderEnabled: ready && service.reminderEnabled
+  readonly property string reminderTime: ready ? service.reminderTime : Model.DEFAULT_REMINDER_TIME
+  readonly property int reminderMinReviews: ready ? service.reminderMinReviews : 1
 
-  // The clock for relative times; not account data.
-  property real now: Date.now()
-
-  // ---------- State ----------
-  // Everything between here and "End of account state" belongs to the
-  // active token's account. resetAccount() clears all of it whenever that
-  // token changes or is removed (test/contracts.test.js checks it), and
-  // WaniKaniClient drops results of requests made with the previous token.
-  // Within one account, summary/user are kept on failure so stale numbers
-  // stay visible.
-  property var summary: null
-  property var user: null
-  property var error: null              // Model message or null
-  property bool loading: false
-  property real lastUpdated: 0
-
-  readonly property int reviews: summary ? summary.reviews : 0
-  readonly property int lessons: summary ? summary.lessons : 0
   // Nothing the bar would show besides the done check (hideWhenIdle hides it).
   readonly property bool idle: Model.idle(summary, showLessons)
 
-  // ---------- Popup details: SRS breakdown + level progress ----------
-  // Fetched only while the popup is open, at most every DETAILS_MAX_AGE_MS,
-  // so the background refresh stays at two requests.
-  property var srsCounts: null
-  property var levelInfo: null
-  property bool detailsLoading: false
-  property real detailsUpdated: 0
-  property int detailsLevel: 0
+  // The clock for relative times in the open popup.
+  property real now: Date.now()
 
-  // ---------- In-popup token entry ----------
-  property bool tokenRejected: false   // last refresh got a 401 or the token is malformed
-  property bool tokenMalformed: false  // the stored token isn't a valid API token
-  // ---------- End of account state ----------
-  readonly property bool showTokenEntry: !hasToken || tokenRejected || tokenSession.editing
+  readonly property bool showTokenEntry: ready && (!hasToken || tokenRejected || service.tokenSession.editing)
 
   // "main" or "settings" (gear in the popup header).
   property string view: "main"
   readonly property bool inSettings: view === "settings"
-  readonly property bool showMain: !inSettings && !showTokenEntry
+  readonly property bool showMain: ready && !inSettings && !showTokenEntry
 
   readonly property var pillParts: {
+    if (!ready) return { main: "…", extra: "", done: false }
     if (!hasToken) return { main: "—", extra: "", done: false }
     if (!summary) return { main: error !== null ? "!" : "…", extra: "", done: false }
     return Model.barParts(summary, showLessons, strings.formatNumber)
@@ -94,88 +96,9 @@ Panel {
   // All reviews cleared: the pill and popup show a check in the accent color.
   readonly property bool reviewsDone: pillParts.done === true
 
-  // ---------- Data ----------
   function refresh() {
     root.now = Date.now()
-    if (!hasToken) {
-      root.error = null
-      return
-    }
-    if (root.loading) return
-    root.loading = true
-    apiClient.getAll(["/summary", "/user"], function(results) {
-      var summaryResult = results[0]
-      var userResult = results[1]
-      if (summaryResult.status === 200) root.summary = Model.parseSummary(summaryResult.json, Date.now())
-      if (userResult.status === 200) root.user = Model.parseUser(userResult.json)
-      root.tokenMalformed = summaryResult.status === Model.STATUS_BAD_TOKEN
-      if (Model.tokenRejected(summaryResult.status) || Model.tokenRejected(userResult.status)) root.tokenRejected = true
-      else if (userResult.status === 200) root.tokenRejected = false
-
-      var failed = [summaryResult, userResult].filter(function(r) { return r.status !== 200 })[0]
-      root.error = failed ? Model.errorInfo(failed.status) : null
-      if (!failed) root.lastUpdated = Date.now()
-      root.loading = false
-      if (userResult.status === 200 && root.opened) root.refreshDetails(false)
-    })
-  }
-
-  function refreshDetails(force) {
-    var level = root.user ? root.user.level : 0
-    if (!level || root.detailsLoading || !root.hasToken) return
-    var fresh = Date.now() - root.detailsUpdated < Model.DETAILS_MAX_AGE_MS
-    if (!force && fresh && level === root.detailsLevel) return
-
-    root.detailsLoading = true
-    var groups = Model.SRS_GROUPS
-    var paths = groups.map(function(group) { return "/assignments?srs_stages=" + group.stages })
-    paths.push("/subjects?types=kanji&levels=" + level)
-    paths.push("/assignments?subject_types=kanji&levels=" + level)
-
-    apiClient.getAll(paths, function(results) {
-      root.detailsLoading = false
-      // Keep the previous numbers visible when anything failed.
-      if (results.some(function(r) { return r.status !== 200 })) return
-      var counts = {}
-      groups.forEach(function(group, i) { counts[group.key] = Model.totalCount(results[i].json) })
-      var subjects = results[groups.length].json
-      var assignments = results[groups.length + 1].json
-      root.srsCounts = Model.srsBreakdown(counts)
-      root.levelInfo = Model.levelProgress(subjects, assignments, level)
-      root.detailsLevel = level
-      root.detailsUpdated = Date.now()
-    })
-  }
-
-  // A new token was saved and is active. Re-entering the active token
-  // changes nothing (and resets nothing), so clear these here too.
-  function tokenConnected() {
-    root.tokenRejected = false
-    root.tokenMalformed = false
-    root.error = null
-    root.refresh()
-  }
-
-  // Clears everything that belongs to the active token's account, including
-  // in-flight flags: the client drops the results those were waiting for.
-  function resetAccount() {
-    root.summary = null
-    root.user = null
-    root.error = null
-    root.loading = false
-    root.lastUpdated = 0
-    root.srsCounts = null
-    root.levelInfo = null
-    root.detailsLoading = false
-    root.detailsUpdated = 0
-    root.detailsLevel = 0
-    root.tokenRejected = false
-    root.tokenMalformed = false
-  }
-
-  function tokenDisconnected() {
-    root.resetAccount()
-    root.view = "main"
+    if (root.service) root.service.refresh(root.opened)
   }
 
   // Writes one key into this widget's shell.json entry; the shell pushes the
@@ -196,9 +119,10 @@ Panel {
   }
 
   function startTokenChange() {
+    if (!root.ready) return
     root.open()
     root.view = "main"
-    tokenSession.startEditing()
+    root.tokenSession.startEditing()
   }
 
   function openUrl(url) {
@@ -206,19 +130,21 @@ Panel {
     root.close()
   }
 
-  onApiTokenChanged: {
-    root.resetAccount()
-    Qt.callLater(refresh)
-  }
   onOpenedChanged: {
     if (opened) {
       refresh()
     } else {
-      tokenSession.reset()
+      if (root.ready) root.tokenSession.reset()
       view = "main"
     }
   }
-  Component.onCompleted: Qt.callLater(refresh)
+
+  // A Disconnect on any screen returns every screen to its main view.
+  Connections {
+    target: root.service
+    ignoreUnknownSignals: true
+    function onDisconnected() { root.view = "main" }
+  }
 
   ShellIpc {
     target: Model.PLUGIN_ID
@@ -230,7 +156,7 @@ Panel {
     function toggle() { root.toggle() }
     function refresh() { root.refresh() }
     // Sends the reminder now with the current counts (for testing the look).
-    function testReminder() { reminder.send(root.reviews, root.lessons) }
+    function testReminder() { if (root.reminder) root.reminder.send(root.reviews, root.lessons) }
     // Opens the popup on its settings page.
     function settings() { root.showSettings() }
     // Opens the popup on the token field, like "Change token".
@@ -243,47 +169,6 @@ Panel {
       var parsed
       try { parsed = JSON.parse(value) } catch (e) { parsed = value }
       root.persistSetting(key, parsed)
-    }
-  }
-
-  TokenStore {
-    id: tokenStore
-  }
-
-  TokenSession {
-    id: tokenSession
-    client: apiClient
-    store: tokenStore
-    onConnected: root.tokenConnected()
-    onDisconnected: root.tokenDisconnected()
-  }
-
-  Reminder {
-    id: reminder
-    client: apiClient
-    l10n: strings
-    active: root.reminderEnabled && root.hasToken
-    clockMinutes: Model.parseClock(root.reminderTime)
-    minReviews: root.reminderMinReviews
-    onSummaryFetched: function(summary) { root.summary = summary }
-  }
-
-  // Background refresh (disclosed in the README; refreshMinutes 0 = off).
-  Timer {
-    interval: Math.max(1, root.refreshMinutes) * Model.MINUTE_MS
-    running: root.hasToken && root.autoRefresh
-    repeat: true
-    onTriggered: root.refresh()
-  }
-
-  // New reviews unlock on the hour; refresh just after it.
-  Timer {
-    running: root.hasToken && root.autoRefresh
-    interval: Model.msUntilNextHour(Date.now())
-    onTriggered: {
-      root.refresh()
-      interval = Model.msUntilNextHour(Date.now())
-      restart()
     }
   }
 
@@ -414,18 +299,18 @@ Panel {
           reminderEnabled: root.reminderEnabled
           reminderTime: root.reminderTime
           reminderMinReviews: root.reminderMinReviews
-          reminderSentToday: reminder.lastDate === Model.dateKey(root.now)
+          reminderSentToday: root.ready && root.reminder.lastDate === Model.dateKey(root.now)
           // Account details only while a token is active.
           username: root.hasToken && root.user ? root.user.username : ""
           level: root.hasToken && root.user ? root.user.level : 0
           hasToken: root.hasToken
           tokenFromSettings: root.settingsToken !== ""
-          tokenFromFile: tokenStore.token !== ""
+          tokenFromFile: root.ready && root.tokenStore.token !== ""
           onSettingChanged: function(key, value) { root.persistSetting(key, value) }
-          onTestNotificationRequested: reminder.send(root.reviews, root.lessons)
+          onTestNotificationRequested: if (root.ready) root.reminder.send(root.reviews, root.lessons)
           onChangeTokenRequested: root.startTokenChange()
-          accountError: tokenSession.accountError
-          onDisconnectRequested: tokenSession.disconnect()
+          accountError: root.ready ? root.tokenSession.accountError : null
+          onDisconnectRequested: if (root.ready) root.tokenSession.disconnect()
           onEditingDone: body.forceActiveFocus()
         }
 
@@ -436,17 +321,18 @@ Panel {
           l10n: strings
           foreground: body.fg
           fontFamily: body.family
-          busy: tokenSession.busy
+          busy: root.ready && root.tokenSession.busy
           rejected: root.tokenRejected
           malformed: root.tokenMalformed
-          editing: tokenSession.editing
-          canCancel: tokenSession.canCancel
-          error: tokenSession.error
+          editing: root.ready && root.tokenSession.editing
+          canCancel: !root.ready || root.tokenSession.canCancel
+          clearCount: root.ready ? root.tokenSession.clearCount : 0
+          error: root.ready ? root.tokenSession.error : null
           tokenFromSettings: root.settingsToken !== ""
-          savedPath: tokenStore.displayPath
-          onSubmitted: function(token) { tokenSession.submit(token) }
-          onEdited: tokenSession.clearError()
-          onCancelRequested: tokenSession.cancel()
+          savedPath: root.ready ? root.tokenStore.displayPath : ""
+          onSubmitted: function(token) { if (root.ready) root.tokenSession.submit(token) }
+          onEdited: if (root.ready) root.tokenSession.clearError()
+          onCancelRequested: if (root.ready) root.tokenSession.cancel()
           onDismissRequested: root.close()
           onGetTokenRequested: root.openUrl(Model.TOKEN_URL)
         }

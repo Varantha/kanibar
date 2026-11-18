@@ -67,7 +67,8 @@ ShellRoot {
         error: session.error ? session.error.key : null,
         accountError: session.accountError ? session.accountError.key : null,
         storeToken: store.token === "${OLD}" ? "old" : store.token === "${NEW}" ? "new" : store.token,
-        connected: root.connectedCount, disconnected: root.disconnectedCount
+        connected: root.connectedCount, disconnected: root.disconnectedCount,
+        clearCount: session.clearCount
       })
       Qt.quit()
     }
@@ -105,7 +106,7 @@ test("a pasted token is checked, saved and connected", { skip }, () => {
   ])
   assert.equal(r.phase, "checking")
   assert.equal(r.file, NEW)
-  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "new", connected: 1, disconnected: 0 })
+  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "new", connected: 1, disconnected: 0, clearCount: 1 })
 })
 
 test("Cancel while checking: nothing is saved and the old token stays", { skip }, () => {
@@ -115,7 +116,7 @@ test("Cancel while checking: nothing is saved and the old token stays", { skip }
   ])
   assert.equal(r.cancelled, true)
   assert.equal(r.file, OLD)
-  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "old", connected: 0, disconnected: 0 })
+  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "old", connected: 0, disconnected: 0, clearCount: 1 })
 })
 
 // The ordering from the audit: the check succeeds and the save starts, then
@@ -127,7 +128,7 @@ test("Cancel once saving has begun is refused", { skip }, () => {
   ])
   assert.deepEqual(r.during, { phase: "saving", canCancel: false, cancelled: false, editing: true })
   assert.equal(r.file, NEW)
-  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "new", connected: 1, disconnected: 0 })
+  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "new", connected: 1, disconnected: 0, clearCount: 1 })
 })
 
 test("Disconnect while checking: the checked token is never saved", { skip }, () => {
@@ -139,6 +140,7 @@ test("Disconnect while checking: the checked token is never saved", { skip }, ()
   assert.equal(r.final.storeToken, "")
   assert.equal(r.final.connected, 0)
   assert.equal(r.final.disconnected, 1)
+  assert.equal(r.final.clearCount, 1)          // the pasted token leaves the field
 })
 
 test("Disconnect while saving: the save finishes, then the token is removed", { skip }, () => {
@@ -167,5 +169,12 @@ test("A token WaniKani rejects is not saved", { skip }, () => {
     `client.answer(401)`,
   ])
   assert.equal(r.file, OLD)
-  assert.deepEqual(r.final, { phase: "idle", editing: true, error: "token.unknown", accountError: null, storeToken: "old", connected: 0, disconnected: 0 })
+  // The rejected token stays in the field so it can be corrected.
+  assert.deepEqual(r.final, { phase: "idle", editing: true, error: "token.unknown", accountError: null, storeToken: "old", connected: 0, disconnected: 0, clearCount: 0 })
+})
+
+test("Closing the popup clears a pasted token", { skip }, () => {
+  const r = run([`session.startEditing(); session.reset()`])
+  assert.equal(r.final.clearCount, 1)
+  assert.equal(r.final.editing, false)
 })

@@ -18,6 +18,9 @@ Column {
   property bool malformed: false       // the saved token isn't a valid API token
   property bool editing: false         // "Change token" was clicked
   property bool canCancel: true        // false once the accepted token is being saved
+  // Each change empties the field (TokenSession.clearCount).
+  property int clearCount: 0
+  onClearCountChanged: tokenField.text = ""
   property var error: null             // Model message or null
   property bool tokenFromSettings: false
   property string savedPath: ""

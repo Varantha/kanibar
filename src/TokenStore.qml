@@ -55,8 +55,21 @@ Item {
 
   function finishRemove(ok) {
     // On failure the file is still there, and so is the token.
-    if (ok) store.token = ""
+    if (ok) {
+      store.discardPendingRead()
+      store.token = ""
+    }
     store.removed(ok)
+  }
+
+  // A read of the token file can still be in flight when it is deleted, and
+  // FileView.reload() joins a running read instead of starting a new one, so
+  // that read could deliver the deleted token afterwards. Changing the path
+  // cancels it (FileView drops results of a disowned read), and setting it
+  // back starts a fresh read that finds the file gone.
+  function discardPendingRead() {
+    tokenFile.path = ""
+    tokenFile.path = store.path
   }
 
   // First makes sure the token directory is ours and private: it must be a
@@ -102,6 +115,7 @@ Item {
   }
 
   FileView {
+    id: tokenFile
     path: store.path
     watchChanges: true
     printErrors: false
