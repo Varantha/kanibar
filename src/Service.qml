@@ -15,11 +15,25 @@ Item {
 
   // Injected by the shell.
   property var shell: null
-  // Pushed by the bar widgets: their (shared) shell.json entry.
+  // Pushed by the bar widgets: their (shared) shell.json entry without its
+  // id. An entry with only defaults is {}, which is valid: a key that is
+  // missing means its default, including no apiToken override.
   property var settings: ({})
-  // Nothing runs until a widget has handed over its settings, so an enabled
-  // plugin with no widget on the bar stays quiet.
-  readonly property bool settingsReady: settings !== null && typeof settings === "object" && Object.keys(settings).length > 0
+
+  // The bar widgets currently on screen (one per monitor). The service can
+  // outlive them: the shell keeps it while the plugin is enabled, even with
+  // no widget on the bar. Background work (refreshes, the reminder) only
+  // runs while at least one is attached.
+  property var attachedWidgets: []
+  readonly property bool attached: attachedWidgets.length > 0
+
+  function attach(widget) {
+    if (service.attachedWidgets.indexOf(widget) === -1) service.attachedWidgets = service.attachedWidgets.concat([widget])
+  }
+
+  function detach(widget) {
+    service.attachedWidgets = service.attachedWidgets.filter(function(w) { return w !== widget })
+  }
 
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
@@ -72,6 +86,9 @@ Item {
   property bool tokenMalformed: false  // the stored token isn't a valid API token
   // ---------- End of account state ----------
 
+  // Timed refreshes run only while a widget is attached and has a token.
+  readonly property bool backgroundRefresh: attached && hasToken && autoRefresh
+
   readonly property int reviews: summary ? summary.reviews : 0
   readonly property int lessons: summary ? summary.lessons : 0
 
@@ -81,7 +98,7 @@ Item {
   // ---------- Data ----------
   // `withDetails`: a popup is open, so also fetch its SRS and level details.
   function refresh(withDetails) {
-    if (!service.settingsReady) return
+    if (!service.attached) return
     if (!service.hasToken) {
       service.error = null
       return
@@ -167,7 +184,7 @@ Item {
     service.resetAccount()
     Qt.callLater(function() { service.refresh(false) })
   }
-  onSettingsReadyChanged: if (settingsReady) Qt.callLater(function() { service.refresh(false) })
+  onAttachedChanged: if (attached) Qt.callLater(function() { service.refresh(false) })
 
   TokenStore {
     id: tokenStore
@@ -185,7 +202,7 @@ Item {
     id: reminder
     client: apiClient
     l10n: strings
-    active: service.settingsReady && service.reminderEnabled && service.hasToken
+    active: service.attached && service.reminderEnabled && service.hasToken
     clockMinutes: Model.parseClock(service.reminderTime)
     minReviews: service.reminderMinReviews
     onSummaryFetched: function(summary) { service.summary = summary }
@@ -194,14 +211,14 @@ Item {
   // Background refresh (disclosed in the README; refreshMinutes 0 = off).
   Timer {
     interval: Math.max(1, service.refreshMinutes) * Model.MINUTE_MS
-    running: service.settingsReady && service.hasToken && service.autoRefresh
+    running: service.backgroundRefresh
     repeat: true
     onTriggered: service.refresh(false)
   }
 
   // New reviews unlock on the hour; refresh just after it.
   Timer {
-    running: service.settingsReady && service.hasToken && service.autoRefresh
+    running: service.backgroundRefresh
     interval: Model.msUntilNextHour(Date.now())
     onTriggered: {
       service.refresh(false)

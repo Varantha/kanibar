@@ -39,12 +39,30 @@ Panel {
   readonly property bool ready: service !== null
 
   // Every screen's widget shares one shell.json entry; any of them can hand
-  // it over.
+  // it over. An entry with only defaults arrives as {} and is handed over
+  // too: removing the last override (say apiToken) must reach the service.
   function pushSettings() {
-    if (root.service && root.settings && Object.keys(root.settings).length > 0) root.service.settings = root.settings
+    if (root.service && root.settings && typeof root.settings === "object") root.service.settings = root.settings
   }
-  onServiceChanged: pushSettings()
   onSettingsChanged: pushSettings()
+
+  // Attach to the service while this widget exists, so it knows a widget is
+  // on the bar and stops background work once the last one is gone.
+  property var attachedTo: null
+  function syncService() {
+    if (root.attachedTo === root.service) return
+    if (root.attachedTo) root.attachedTo.detach(root)
+    root.attachedTo = root.service
+    if (root.service) {
+      root.pushSettings()
+      root.service.attach(root)
+    }
+  }
+  // Change handlers don't run for a binding's first value, so also sync on
+  // completion (the service usually exists already, e.g. for a 2nd monitor).
+  onServiceChanged: syncService()
+  Component.onCompleted: syncService()
+  Component.onDestruction: if (root.attachedTo) root.attachedTo.detach(root)
 
   readonly property var tokenStore: ready ? service.tokenStore : null
   readonly property var tokenSession: ready ? service.tokenSession : null

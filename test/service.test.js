@@ -20,15 +20,23 @@ const skip = !hasQs ? "Quickshell (qs) is not installed" : !hasOmarchy ? "Omarch
 
 // `script` runs at start with `service`, `screenA`, `screenB` and
 // `log(name, value)`; the final state is logged after `waitMs`.
-function run(script, waitMs, startMs = 800) {
+// Options: settings (the widget entry the screens hand over, default
+// refresh off and reminder off), tokenFile (whether a saved token exists).
+function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, reminderEnabled: false }, tokenFile = true } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "kanibar-service-"))
   const config = path.join(base, "config")
   const tokenDir = path.join(config, "kanibar")
   fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 })
-  fs.writeFileSync(path.join(tokenDir, "token"), OLD + "\n", { mode: 0o600 })
+  if (tokenFile) fs.writeFileSync(path.join(tokenDir, "token"), OLD + "\n", { mode: 0o600 })
   // The real directory for the reminder state, kept inside the scratch HOME.
   const home = path.join(base, "home")
-  fs.mkdirSync(home)
+  // Today's reminder already handled, so an enabled reminder isn't due:
+  // no extra request and never a real notification from a test.
+  const stateDir = path.join(home, ".local", "state", "omarchy")
+  fs.mkdirSync(stateDir, { recursive: true })
+  const d = new Date()
+  const today = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0")
+  fs.writeFileSync(path.join(stateDir, "kanibar-reminder"), today + "\n")
 
   const bin = path.join(base, "bin")
   fs.mkdirSync(bin)
@@ -55,11 +63,13 @@ ShellRoot {
   function log(name, value) { console.log("RESULT " + JSON.stringify({ name: name, value: value })) }
   K.Service {
     id: service
-    settings: ({ id: "io.github.erfoip.kanibar", refreshMinutes: 0, reminderEnabled: false })
+    settings: (${JSON.stringify(settings)})
   }
-  // Two monitors' widgets: each just holds the shared service.
+  // Two monitors' widgets: each holds the shared service and attaches to
+  // it, as Panel does.
   QtObject { id: screenA; property var service: service }
   QtObject { id: screenB; property var service: service }
+  Component.onCompleted: { service.attach(screenA); service.attach(screenB) }
   Timer {
     interval: ${startMs}; running: true
     onTriggered: { ${script} }
@@ -73,6 +83,7 @@ ShellRoot {
         summary: service.summary !== null,
         sessionPhase: service.tokenSession.phase
       })
+      log("background", { attached: service.attached, backgroundRefresh: service.backgroundRefresh, reminderActive: service.reminder.active })
       Qt.quit()
     }
   }
@@ -83,7 +94,7 @@ ShellRoot {
     encoding: "utf8",
     timeout: startMs + waitMs + 12000
   })
-  const results = {}
+  const results = { log: result.stdout + result.stderr }
   for (const line of (result.stdout + result.stderr).split("\n")) {
     const m = /RESULT (\{.*\})\s*$/.exec(line)
     if (m) { const r = JSON.parse(m[1]); results[r.name] = r.value }
@@ -121,4 +132,45 @@ test("Two screens refreshing at once send one batch of requests", { skip }, () =
   const users = r.curlCalls.filter(c => c.includes("/v2/user")).length
   assert.equal(summaries, 2, "startup + one shared refresh:\n" + r.curlCalls.join("\n"))
   assert.equal(users, 2, r.curlCalls.join("\n"))
+})
+
+// An entry with only defaults arrives as {}. Removing the last override,
+// here the apiToken, must reach the service and drop that token.
+test("Removing apiToken as the last override drops that token", { skip }, () => {
+  const r = run(`
+    log("before", { hasToken: service.hasToken, settingsToken: service.settingsToken === "${NEW}" })
+    log("callsBefore", 0)
+    service.settings = ({})
+    service.refresh(false)
+  `, 2500, 2800, { settings: { apiToken: NEW }, tokenFile: false })
+  assert.deepEqual(r.before, { hasToken: true, settingsToken: true })
+  assert.equal(r.final.hasToken, false)
+  assert.equal(r.final.user, null)
+  assert.equal(r.final.summary, false)
+  // Only the startup refresh with the override token; nothing after removal.
+  assert.equal(r.curlCalls.filter(c => c.includes("/v2/summary")).length, 1, r.curlCalls.join("\n"))
+})
+
+// The regression a "wait for non-empty settings" guard caused: a widget
+// with only defaults must still load.
+test("A widget with only default settings loads its data", { skip }, () => {
+  const r = run(``, 2500, 800, { settings: {} })
+  assert.equal(r.final.hasToken, true)
+  assert.equal(r.final.user, "old-account")
+  assert.ok(r.curlCalls.some(c => c.includes("/v2/summary")), "no request was made")
+})
+
+// The shell keeps the service while the plugin is enabled, even with no
+// widget on the bar. With the last widget gone, nothing may run.
+test("Removing the last widget stops background work", { skip }, () => {
+  const r = run(`
+    service.detach(screenA)
+    log("oneLeft", { attached: service.attached, backgroundRefresh: service.backgroundRefresh })
+    service.detach(screenB)
+    service.refresh(false)
+  `, 2000, 2800, { settings: { refreshMinutes: 10, reminderEnabled: true } })
+  assert.deepEqual(r.oneLeft, { attached: true, backgroundRefresh: true })
+  assert.deepEqual(r.background, { attached: false, backgroundRefresh: false, reminderActive: false })
+  // Only the startup refresh; the refresh after detaching sent nothing.
+  assert.equal(r.curlCalls.filter(c => c.includes("/v2/summary")).length, 1, r.curlCalls.join("\n"))
 })

@@ -128,3 +128,14 @@ test("a failed delete is reported, not treated as a disconnect", () => {
   // TokenSession only reports a disconnect when the store says it worked.
   assert.match(qmlSources["TokenSession.qml"], /function onRemoved\(ok\) \{\s+if \(!ok\) \{/)
 })
+
+// An entry with only defaults arrives as {} and must still reach the
+// service: removing the last override (e.g. apiToken) has to take effect.
+test("Panel hands over empty settings and attaches to the service", () => {
+  const panel = qmlSources["Panel.qml"]
+  const push = panel.slice(panel.indexOf("function pushSettings()"), panel.indexOf("onSettingsChanged: pushSettings()"))
+  assert.ok(push.length > 0, "pushSettings() not found")
+  assert.doesNotMatch(push, /Object\.keys|length/, "pushSettings must not skip empty settings")
+  assert.match(panel, /Component\.onCompleted: syncService\(\)/)
+  assert.match(panel, /Component\.onDestruction: if \(root\.attachedTo\) root\.attachedTo\.detach\(root\)/)
+})
