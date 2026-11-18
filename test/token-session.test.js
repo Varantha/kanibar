@@ -57,7 +57,10 @@ ShellRoot {
       callback(status, status === 200 ? { data: { username: "new", level: 1 } } : null)
     }
   }
-  K.TokenStore { id: store }
+  // Counts the token being published again while a Disconnect runs.
+  property bool disconnecting: false
+  property int republished: 0
+  K.TokenStore { id: store; onTokenChanged: if (root.disconnecting && token !== "") root.republished++ }
   K.TokenSession {
     id: session
     client: client
@@ -252,4 +255,33 @@ test("An unconfirmed Disconnect stays offered until a retry succeeds", { skip },
   assert.equal(r.final.incomplete, false)
   assert.equal(r.final.accountError, null)
   assert.equal(r.final.disconnected, 1)
+})
+
+// Even when the unlock succeeds and the removal still fails, Disconnect
+// must never put the token back into use.
+test("Disconnect never republishes the token, even after an unlock", { skip }, () => {
+  const r = run([
+    `root.disconnecting = true; session.disconnect()`,
+    `log("republished", root.republished)`,
+  ], { keyringDown: "clear-noop" })
+  assert.equal(r.republished, 0)
+  assert.equal(r.final.storeToken, "")
+  assert.equal(r.final.incomplete, true)
+  assert.equal(r.file, OLD)
+})
+
+// Connecting a new account after an unfinished Disconnect: the old retry
+// would now delete the new token, so it's retired.
+test("Connecting a new token retires an unfinished Disconnect", { skip }, () => {
+  const r = run([
+    `lockKeyring("locked-dismiss")`,
+    `session.disconnect()`,
+    `unlockKeyring(); session.startEditing(); session.submit("${NEW}")`,
+    `client.answer(200)`,
+  ])
+  assert.equal(r.file, NEW)
+  assert.equal(r.final.incomplete, false)
+  assert.equal(r.final.accountError, null)
+  assert.equal(r.final.storeToken, "new")
+  assert.equal(r.final.connected, 1)
 })

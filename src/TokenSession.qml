@@ -44,7 +44,9 @@ Item {
   // ready to reconnect with one click.
   property int clearCount: 0
 
-  readonly property bool busy: phase !== "idle"
+  // Also busy while a Disconnect is still removing the token, so a new one
+  // can't be saved and then deleted by that removal.
+  readonly property bool busy: phase !== "idle" || store.removing
   readonly property bool canCancel: phase !== "saving"
 
   // A newly entered token is saved and active.
@@ -131,6 +133,10 @@ Item {
       }
       session.editing = false
       session.clearCount++
+      // A new account replaces whatever an unfinished Disconnect was about:
+      // its retry would now delete this token.
+      session.disconnectIncomplete = false
+      session.accountError = null
       session.connected()
     }
 

@@ -33,6 +33,7 @@ case "$1" in
           cat > "$d/secret.tmp" && mv "$d/secret.tmp" "$d/secret"; exit 0 ;;
   clear)  [ -e "$d/down-clear" ] && down
           locked && exit 1
+          [ -e "$d/clear-noop" ] && exit 1   # removes nothing, says nothing
           [ -f "$d/secret" ] && { rm -f "$d/secret"; exit 0; }; exit 1 ;;
 esac
 exit 2
@@ -41,8 +42,9 @@ exit 2
 // Creates the fake under `base`: bin/secret-tool and keyring/. `secret`
 // seeds a stored token; `down` is "all", "store" or "clear" to make that
 // part unreachable, "locked" / "locked-dismiss" for a locked keyring that
-// unlocks on lookup / whose unlock prompt is dismissed, or "search-fails"
-// for a search that fails without a message. Returns { bin, dir, env, secret(), calls() }.
+// unlocks on lookup / whose unlock prompt is dismissed, "search-fails" for
+// a search that fails without a message, or "clear-noop" for a clear that
+// removes nothing even when unlocked. Returns { bin, dir, env, secret(), calls() }.
 function fakeKeyring(base, { secret = null, down = null } = {}) {
   const bin = path.join(base, "bin")
   const dir = path.join(base, "keyring")
@@ -50,7 +52,7 @@ function fakeKeyring(base, { secret = null, down = null } = {}) {
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(bin, "secret-tool"), SCRIPT, { mode: 0o755 })
   if (secret !== null) fs.writeFileSync(path.join(dir, "secret"), secret)
-  if (down) fs.writeFileSync(path.join(dir, down === "all" ? "down" : (down.startsWith("locked") || down === "search-fails") ? down : "down-" + down), "")
+  if (down) fs.writeFileSync(path.join(dir, down === "all" ? "down" : (down.startsWith("locked") || down === "search-fails" || down === "clear-noop") ? down : "down-" + down), "")
   return {
     bin, dir,
     env: { FAKE_KEYRING_DIR: dir },

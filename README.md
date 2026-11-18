@@ -158,9 +158,17 @@ The minimum number of waiting reviews needed to send a reminder. Raise it if a h
 
 The token is not a setting: it lives only in your system keyring.
 
+If you ran a pre-release build from before 0.6, it may have left a plaintext copy of the token behind, which this version ignores. Delete it and paste your token into the popup again:
+
+```sh
+rm -f ~/.config/kanibar/token && rmdir ~/.config/kanibar 2>/dev/null
+```
+
+Also remove any `"apiToken"` line from Kanibar's entry in `~/.config/omarchy/shell.json`.
+
 The settings page's **Account** section shows who you're connected as, and has:
 - **Change token:** opens the token field. The old token keeps working until the new one is verified.
-- **Disconnect:** removes the token from the keyring, checks that it's really gone, and clears the displayed data. If your keyring is locked, you're asked to unlock it. If the removal can't be confirmed, kanibar says so, stops using the token, and offers **Retry disconnect** until it succeeds.
+- **Disconnect:** removes the token from the keyring, checks that it's really gone, and clears the displayed data. If your keyring is locked, you're asked to unlock it. Kanibar stops using the token as soon as you press Disconnect. If the removal can't be confirmed, it says so and offers **Retry disconnect** (the popup opens on it) until it succeeds or you connect a new token.
 
 ### Example `shell.json` entry
 
@@ -252,7 +260,7 @@ omarchy restart shell                              # QML hot reload is unreliabl
 | `src/Service.qml` | Runs once for all monitors: account state, refreshes, token store and entry flow, reminder |
 | `src/Panel.qml` | The bar widget, once per monitor: a view onto the service, plus the popup layout |
 | `src/WaniKaniClient.qml` | HTTPS requests with timeout and size cap |
-| `src/TokenStore.qml` | Looks up, saves and removes the token in the system keyring (`secret-tool`); moves an older token file into it |
+| `src/TokenStore.qml` | Looks up, saves and removes the token in the system keyring (`secret-tool`) |
 | `src/TokenSession.qml` | Token entry flow: check, save, cancel and disconnect, in a fixed order |
 | `src/Reminder.qml` | Daily review reminder and its notification |
 | `src/BarPill.qml`, `SettingsPage.qml`, `TokenEntry.qml`, `CountTiles.qml`, `LevelProgress.qml`, `SrsBreakdown.qml`, `ReviewForecast.qml` | Views: read state, emit intent |

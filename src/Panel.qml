@@ -80,6 +80,7 @@ Panel {
   readonly property var levelInfo: ready ? service.levelInfo : null
   readonly property bool tokenRejected: ready && service.tokenRejected
   readonly property bool tokenMalformed: ready && service.tokenMalformed
+  readonly property bool disconnectIncomplete: ready && service.tokenSession.disconnectIncomplete
   readonly property int reviews: summary ? summary.reviews : 0
   readonly property int lessons: summary ? summary.lessons : 0
 
@@ -150,6 +151,8 @@ Panel {
 
   onOpenedChanged: {
     if (opened) {
+      // An unfinished Disconnect opens on its warning and retry.
+      if (root.disconnectIncomplete) view = "settings"
       refresh()
     } else {
       if (root.ready) root.tokenSession.reset()
@@ -278,7 +281,9 @@ Panel {
           fontFamily: body.family
           title: root.inSettings ? strings.t("hero.settingsTitle") : strings.t("hero.title")
           trailingControl: PanelActionButton {
-            visible: root.hasToken || root.inSettings
+            // Also while a Disconnect is unfinished: its retry is on the
+            // settings page.
+            visible: root.hasToken || root.inSettings || root.disconnectIncomplete
             // Back points the reading direction's way: left, or right in RTL.
             iconText: root.inSettings ? (Commons.I18n.rightToLeft ? "󰁔" : "󰁍") : "󰒓"
             tooltipText: root.inSettings ? strings.t("action.back") : strings.t("action.settings")
@@ -323,7 +328,7 @@ Panel {
           level: root.hasToken && root.user ? root.user.level : 0
           hasToken: root.hasToken
           hasStoredToken: root.hasToken
-          disconnectIncomplete: root.ready && root.tokenSession.disconnectIncomplete
+          disconnectIncomplete: root.disconnectIncomplete
           onSettingChanged: function(key, value) { root.persistSetting(key, value) }
           onTestNotificationRequested: if (root.ready) root.reminder.send(root.reviews, root.lessons)
           onChangeTokenRequested: root.startTokenChange()

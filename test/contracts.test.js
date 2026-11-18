@@ -124,12 +124,18 @@ test("a failed delete is reported, not treated as a disconnect", () => {
   // longer finds the entry; clear's exit code confirms nothing.
   const confirm = store.slice(store.indexOf("function clearConfirmed("), store.indexOf("function isStored("))
   assert.match(confirm, /store\.isStored\(/)
-  assert.match(confirm, /\} else if \(!present\) \{\s+store\.token = ""\s+done\(true\)/)
+  assert.match(confirm, /else if \(!present\) done\(true\)/)
+  // The unlock step never publishes the secret, and Disconnect stops using
+  // the token as soon as it starts.
+  assert.doesNotMatch(confirm, /store\.lookup\(/)
+  assert.match(store, /function remove\(\) \{[^}]*store\.token = ""/)
   assert.match(store, /\["search", "--all"\]/)
   assert.doesNotMatch(store, /"--unlock"/, "the check must not unlock")
   // A removal during a save waits for it. This must use the store's own flag:
   // Process.running is still false right after a process is asked to start.
-  assert.match(store, /function remove\(\) \{\s+if \(store\.saving\) \{\s+store\.removeQueued = true/)
+  const remove = store.slice(store.indexOf("function remove() {"), store.indexOf("function clearConfirmed("))
+  assert.ok(remove.indexOf("if (store.saving) {") >= 0 && remove.indexOf("if (store.saving) {") < remove.indexOf("store.clearConfirmed("), "remove() must queue behind a running save before touching the keyring")
+  assert.match(remove, /if \(store\.saving\) \{\s+store\.removeQueued = true/)
   // TokenSession only reports a disconnect when the store says it worked.
   assert.match(qmlSources["TokenSession.qml"], /function onRemoved\(ok\) \{\s+if \(!ok\) \{/)
   // Only a successful search is an answer.
@@ -160,5 +166,11 @@ test("Panel hands over empty settings and attaches to the service", () => {
 test("the Disconnect action stays visible while a Disconnect is incomplete", () => {
   const page = qmlSources["SettingsPage.qml"]
   assert.match(page, /visible: page\.hasStoredToken \|\| page\.disconnectIncomplete/)
-  assert.match(qmlSources["Panel.qml"], /disconnectIncomplete: root\.ready && root\.tokenSession\.disconnectIncomplete/)
+  const panel = qmlSources["Panel.qml"]
+  assert.match(panel, /disconnectIncomplete: root\.disconnectIncomplete/)
+  // Reachable from the popup: the gear stays, and the popup opens on it.
+  assert.match(panel, /visible: root\.hasToken \|\| root\.inSettings \|\| root\.disconnectIncomplete/)
+  assert.match(panel, /if \(root\.disconnectIncomplete\) view = "settings"/)
+  // No new token while a removal is still running.
+  assert.match(qmlSources["TokenSession.qml"], /readonly property bool busy: phase !== "idle" \|\| store\.removing/)
 })

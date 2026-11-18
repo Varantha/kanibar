@@ -37,6 +37,10 @@ Item {
   // A removal asked for while a save was still running. It runs once the
   // save is done, so the save can't land after it and bring the token back.
   property bool removeQueued: false
+  // True from remove() until its result is in. TokenSession refuses new
+  // tokens meanwhile, so a removal's retry can't delete a token saved
+  // after it started.
+  property bool removing: false
 
   signal saved(bool ok)
   // ok is false when the removal couldn't be confirmed: the token may still
@@ -89,12 +93,20 @@ Item {
     })
   }
 
+  // Disconnect: the token stops being used immediately and stays unused
+  // whatever the outcome, so a failed or partial removal can never leave
+  // the app running on it (or on a different one than stored).
   function remove() {
+    store.removing = true
+    store.token = ""
     if (store.saving) {
       store.removeQueued = true
       return
     }
-    store.clearConfirmed(1, function(ok) { store.removed(ok) })
+    store.clearConfirmed(1, function(ok) {
+      store.removing = false
+      store.removed(ok)
+    })
   }
 
   // secret-tool clear exits 1 silently both when there was nothing to clear
@@ -103,33 +115,31 @@ Item {
   // locked entry whose unlock prompt is dismissed it also reports "not
   // found". A search without unlocking lists matching items whether locked
   // or not (libsecret's load_items), so that is the check. If the entry is
-  // still there, a lookup asks the user to unlock the keyring and the
-  // removal is tried once more. When it still fails, `token` becomes what
-  // the keyring hands out (nothing, if it stays locked), so the app never
-  // keeps running on a different token than the one stored.
+  // still there, a lookup asks the user to unlock the keyring (its result
+  // is discarded, never published as the active token) and the removal is
+  // tried once more.
   function clearConfirmed(retries, done) {
     store.secretTool(["clear"].concat(store.attributes), null, function(cleared) {
       store.available = !cleared.unreachable
-      // Unreachable: what's stored is unknown, so stop using the token
-      // rather than risk running on a different one than the keyring holds.
       if (cleared.unreachable) {
-        store.token = ""
         done(false)
         return
       }
       store.isStored(function(present, known) {
-        if (!known) {
-          store.token = ""
-          done(false)
-        } else if (!present) {
-          store.token = ""
-          done(true)
-        } else if (retries > 0) {
-          store.lookup(function() { store.clearConfirmed(retries - 1, done) })
-        } else {
-          store.lookup(function() { done(false) })
-        }
+        if (!known) done(false)
+        else if (!present) done(true)
+        else if (retries > 0) store.unlock(function() { store.clearConfirmed(retries - 1, done) })
+        else done(false)
       })
+    })
+  }
+
+  // Asks the keyring to unlock the entry (a lookup prompts for that) and
+  // throws the secret away.
+  function unlock(done) {
+    store.secretTool(["lookup"].concat(store.attributes), null, function(result) {
+      store.available = !result.unreachable
+      done()
     })
   }
 
