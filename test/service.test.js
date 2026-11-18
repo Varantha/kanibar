@@ -22,7 +22,9 @@ const skip = !hasQs ? "Quickshell (qs) is not installed" : !hasOmarchy ? "Omarch
 // `log(name, value)`; the final state is logged after `waitMs`.
 // Options: settings (the widget entry the screens hand over, default
 // refresh off and reminder off), tokenFile (whether a saved token exists).
-function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, reminderEnabled: false }, tokenFile = true } = {}) {
+// reminderHandled: today's reminder already marked done (the default, so an
+// enabled reminder isn't due and tests never notify by accident).
+function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, reminderEnabled: false }, tokenFile = true, reminderHandled = true } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "kanibar-service-"))
   const config = path.join(base, "config")
   const tokenDir = path.join(config, "kanibar")
@@ -34,18 +36,25 @@ function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, re
   // no extra request and never a real notification from a test.
   const stateDir = path.join(home, ".local", "state", "omarchy")
   fs.mkdirSync(stateDir, { recursive: true })
+  const stateFile = path.join(stateDir, "kanibar-reminder")
   const d = new Date()
   const today = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0")
-  fs.writeFileSync(path.join(stateDir, "kanibar-reminder"), today + "\n")
+  if (reminderHandled) fs.writeFileSync(stateFile, today + "\n")
 
   const bin = path.join(base, "bin")
   fs.mkdirSync(bin)
   const calls = path.join(base, "curl-calls")
+  // One body for every endpoint: a user, and three reviews due since 2020.
   fs.writeFileSync(path.join(bin, "curl"), `#!/bin/sh
 cat > /dev/null
 echo "$*" >> "${calls}"
 sleep 1.5
-printf '%s\\n%s' '{"data":{"username":"old-account","level":5,"lessons":[],"reviews":[]}}' 200
+printf '%s\\n%s' '{"data":{"username":"old-account","level":5,"lessons":[],"reviews":[{"available_at":"2020-01-01T00:00:00Z","subject_ids":[1,2,3]}]}}' 200
+`, { mode: 0o755 })
+  // Logs instead of notifying.
+  const notifications = path.join(base, "notifications")
+  fs.writeFileSync(path.join(bin, "omarchy-notification-send"), `#!/bin/sh
+echo "$*" >> "${notifications}"
 `, { mode: 0o755 })
 
   const harness = path.join(base, "harness")
@@ -102,6 +111,8 @@ ShellRoot {
   assert.ok(results.final, "harness produced no result:\n" + result.stdout + result.stderr)
   const file = path.join(tokenDir, "token")
   results.file = fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : null
+  results.notifications = fs.existsSync(notifications) ? fs.readFileSync(notifications, "utf8").trim().split("\n").filter(Boolean) : []
+  results.reminderMarked = fs.existsSync(stateFile) && fs.readFileSync(stateFile, "utf8").trim() === today
   results.curlCalls = fs.existsSync(calls) ? fs.readFileSync(calls, "utf8").trim().split("\n").filter(Boolean) : []
   return results
 }
@@ -173,4 +184,52 @@ test("Removing the last widget stops background work", { skip }, () => {
   assert.deepEqual(r.background, { attached: false, backgroundRefresh: false, reminderActive: false })
   // Only the startup refresh; the refresh after detaching sent nothing.
   assert.equal(r.curlCalls.filter(c => c.includes("/v2/summary")).length, 1, r.curlCalls.join("\n"))
+})
+
+// ---------- Pending work after deactivation ----------
+// Each case starts a request, deactivates, then lets the (slow) response
+// arrive. A positive control with the same setup shows the side effect does
+// happen when nothing is deactivated, so the harness can see it.
+
+const dueReminder = { refreshMinutes: 0, reminderEnabled: true, reminderTime: "00:00", reminderMinReviews: 1 }
+
+test("control: a due reminder notifies and marks the day", { skip }, () => {
+  const r = run(``, 2500, 800, { settings: dueReminder, reminderHandled: false })
+  assert.equal(r.notifications.length, 1, r.log)
+  assert.equal(r.reminderMarked, true)
+})
+
+test("Turning reminders off before the response arrives sends nothing", { skip }, () => {
+  // The check starts as soon as the screens attach; turn it off mid-flight.
+  const r = run(`
+    service.settings = (${JSON.stringify({ ...dueReminder, reminderEnabled: false })})
+  `, 2500, 400, { settings: dueReminder, reminderHandled: false })
+  assert.equal(r.notifications.length, 0)
+  assert.equal(r.reminderMarked, false)
+})
+
+test("Removing the last widget before the reminder response arrives sends nothing", { skip }, () => {
+  const r = run(`
+    service.detach(screenA)
+    service.detach(screenB)
+  `, 2500, 400, { settings: dueReminder, reminderHandled: false })
+  assert.equal(r.notifications.length, 0)
+  assert.equal(r.reminderMarked, false)
+})
+
+const details = (r) => r.curlCalls.filter(c => c.includes("/v2/assignments") || c.includes("/v2/subjects")).length
+
+test("control: a popup refresh fetches the detail batch", { skip }, () => {
+  const r = run(`screenA.service.refresh(true)`, 4000, 2800)
+  assert.equal(details(r), 7, r.curlCalls.join("\n"))
+})
+
+test("Removing the last widget during a popup refresh starts no detail requests", { skip }, () => {
+  const r = run(`
+    screenA.service.refresh(true)
+    service.detach(screenA)
+    service.detach(screenB)
+  `, 4000, 2800)
+  assert.equal(details(r), 0, r.curlCalls.join("\n"))
+  assert.equal(r.final.user, "old-account")   // from the startup refresh, before detaching
 })

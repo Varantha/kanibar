@@ -27,6 +27,16 @@ Item {
   property var attachedWidgets: []
   readonly property bool attached: attachedWidgets.length > 0
 
+  // Pending work follows one rule: its result is used only if the
+  // conditions it started under still hold. The client drops results from
+  // a previous token; this covers "a widget is still attached". Bumped when
+  // the last widget detaches, it invalidates every request started before,
+  // before any state update or follow-up request.
+  property int attachEpoch: 0
+  function stillAttached(epoch) {
+    return service.attached && epoch === service.attachEpoch
+  }
+
   function attach(widget) {
     if (service.attachedWidgets.indexOf(widget) === -1) service.attachedWidgets = service.attachedWidgets.concat([widget])
   }
@@ -105,7 +115,9 @@ Item {
     }
     if (service.loading) return
     service.loading = true
+    var epoch = service.attachEpoch
     apiClient.getAll(["/summary", "/user"], function(results) {
+      if (!service.stillAttached(epoch)) return
       var summaryResult = results[0]
       var userResult = results[1]
       if (summaryResult.status === 200) service.summary = Model.parseSummary(summaryResult.json, Date.now())
@@ -123,18 +135,21 @@ Item {
   }
 
   function refreshDetails(force) {
+    if (!service.attached) return
     var level = service.user ? service.user.level : 0
     if (!level || service.detailsLoading || !service.hasToken) return
     var fresh = Date.now() - service.detailsUpdated < Model.DETAILS_MAX_AGE_MS
     if (!force && fresh && level === service.detailsLevel) return
 
     service.detailsLoading = true
+    var epoch = service.attachEpoch
     var groups = Model.SRS_GROUPS
     var paths = groups.map(function(group) { return "/assignments?srs_stages=" + group.stages })
     paths.push("/subjects?types=kanji&levels=" + level)
     paths.push("/assignments?subject_types=kanji&levels=" + level)
 
     apiClient.getAll(paths, function(results) {
+      if (!service.stillAttached(epoch)) return
       service.detailsLoading = false
       // Keep the previous numbers visible when anything failed.
       if (results.some(function(r) { return r.status !== 200 })) return
@@ -184,7 +199,16 @@ Item {
     service.resetAccount()
     Qt.callLater(function() { service.refresh(false) })
   }
-  onAttachedChanged: if (attached) Qt.callLater(function() { service.refresh(false) })
+  onAttachedChanged: {
+    if (attached) {
+      Qt.callLater(function() { service.refresh(false) })
+    } else {
+      // Drop everything in flight; its results won't be used.
+      service.attachEpoch++
+      service.loading = false
+      service.detailsLoading = false
+    }
+  }
 
   TokenStore {
     id: tokenStore

@@ -24,6 +24,15 @@ Item {
   // Fresh counts fetched for the check, so the panel can show them too.
   signal summaryFetched(var summary)
 
+  // A check belongs to the run it started in. Turning the reminder off (in
+  // settings, or by removing the last widget) starts a new run, so a check
+  // still in flight can't update state, mark the day or notify afterwards.
+  property int run: 0
+  onActiveChanged: if (!active) {
+    run++
+    checking = false
+  }
+
   // A check in flight for the previous token is dropped by the client, so
   // don't wait for it.
   Connections {
@@ -36,8 +45,10 @@ Item {
     if (!reminder.active || !reminder.stateLoaded || reminder.checking) return
     if (!Model.reminderDue(now, reminder.clockMinutes, reminder.lastDate)) return
     reminder.checking = true
+    var run = reminder.run
     // Fresh counts, so reviews done minutes ago don't trigger a stale nag.
     client.get("/summary", function(status, json) {
+      if (run !== reminder.run || !reminder.active) return
       reminder.checking = false
       if (status !== 200) return   // not marked: retry on the next check
       var summary = Model.parseSummary(json, Date.now())
