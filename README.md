@@ -251,6 +251,7 @@ omarchy restart shell                              # QML hot reload is unreliabl
 | `src/Panel.qml` | Entry point: settings, state, when to fetch, popup layout |
 | `src/WaniKaniClient.qml` | HTTPS requests with timeout and size cap |
 | `src/TokenStore.qml` | Reads, saves and removes `~/.config/kanibar/token` |
+| `src/TokenSession.qml` | Token entry flow: check, save, cancel and disconnect, in a fixed order |
 | `src/Reminder.qml` | Daily review reminder and its notification |
 | `src/BarPill.qml`, `SettingsPage.qml`, `TokenEntry.qml`, `CountTiles.qml`, `LevelProgress.qml`, `SrsBreakdown.qml`, `ReviewForecast.qml` | Views: read state, emit intent |
 | `src/PlainText.qml`, `CaptionText.qml`, `LinkText.qml`, `SectionHeader.qml`, `SettingRow.qml`, `StatTile.qml` | Small building blocks; all text goes through `PlainText` |
@@ -258,7 +259,7 @@ omarchy restart shell                              # QML hot reload is unreliabl
 | `src/Model.js` | Pure parsing, validation and placeholder helpers (no QML), unit-tested in `test/` |
 | `src/Palette.js` | Colors derived from the bar foreground |
 | `i18n/` | Translation catalogs (`en.json`) |
-| `test/` | `model.test.js`: Model.js unit tests. `contracts.test.js`: every string exists in `en.json` and is used, every text renders plain text, animations stay within Omarchy's motion rules |
+| `test/` | `model.test.js`: Model.js unit tests. `contracts.test.js`: every string exists in `en.json` and is used, every text renders plain text, animations stay within Omarchy's motion rules. `token-store.test.js`, `transport.test.js`: the token save script and curl, run for real. `token-session.test.js`: the token entry flow in Quickshell (skipped without `qs`) |
 | `preview.png` | Marketplace preview |
 
 ## License

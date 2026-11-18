@@ -17,6 +17,7 @@ Column {
   property bool rejected: false        // the saved token got a 401
   property bool malformed: false       // the saved token isn't a valid API token
   property bool editing: false         // "Change token" was clicked
+  property bool canCancel: true        // false once the accepted token is being saved
   property var error: null             // Model message or null
   property bool tokenFromSettings: false
   property string savedPath: ""
@@ -105,7 +106,8 @@ Column {
       onActivated: entry.getTokenRequested()
     }
     LinkText {
-      visible: entry.editing
+      // Hidden once saving has begun: the replacement can't be undone then.
+      visible: entry.editing && entry.canCancel
       text: entry.l10n.t("token.cancel")
       foreground: entry.foreground
       fontFamily: entry.fontFamily

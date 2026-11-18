@@ -79,16 +79,7 @@ Panel {
   property bool tokenRejected: false   // last refresh got a 401 or the token is malformed
   property bool tokenMalformed: false  // the stored token isn't a valid API token
   // ---------- End of account state ----------
-  property bool editingToken: false    // "Change token" clicked
-  property bool tokenBusy: false
-  property var tokenError: null        // Model message or null
-  // Bumped by Disconnect and Cancel. A token check or save started before
-  // then is abandoned: its result must not connect an account the user just
-  // turned away from.
-  property int tokenFlow: 0
-  property int savingFlow: -1          // tokenFlow of the save in progress
-  property var accountError: null      // Model message or null (failed disconnect)
-  readonly property bool showTokenEntry: !hasToken || tokenRejected || editingToken
+  readonly property bool showTokenEntry: !hasToken || tokenRejected || tokenSession.editing
 
   // "main" or "settings" (gear in the popup header).
   property string view: "main"
@@ -156,45 +147,12 @@ Panel {
     })
   }
 
-  // Check a pasted token against the API, then store it. Nothing is saved
-  // unless WaniKani accepts it.
-  function submitToken(raw) {
-    if (root.tokenBusy) return
-    var token = String(raw || "").trim()
-    var problem = Model.tokenProblem(token)
-    if (problem !== "") {
-      root.tokenError = Model.message(problem)
-      return
-    }
-    root.tokenBusy = true
-    root.tokenError = null
-    var flow = root.tokenFlow
-    apiClient.get("/user", function(status, json) {
-      if (flow !== root.tokenFlow) return   // disconnected or cancelled meanwhile
-      if (status !== 200) {
-        root.tokenBusy = false
-        root.tokenError = status === 401 ? Model.message("token.unknown") : Model.errorInfo(status)
-        return
-      }
-      // Only saved here: the account's data is fetched once this token is
-      // the active one.
-      root.savingFlow = flow
-      tokenStore.save(token)
-    }, token)
-  }
-
-  function finishTokenSave(ok) {
-    if (root.savingFlow !== root.tokenFlow) return   // abandoned; a removal follows
-    root.tokenBusy = false
-    if (!ok) {
-      root.tokenError = Model.message("token.writeFailed", tokenStore.path)
-      return
-    }
-    // Re-entering the active token changes nothing, so nothing resets these.
+  // A new token was saved and is active. Re-entering the active token
+  // changes nothing (and resets nothing), so clear these here too.
+  function tokenConnected() {
     root.tokenRejected = false
     root.tokenMalformed = false
     root.error = null
-    root.editingToken = false
     root.refresh()
   }
 
@@ -215,30 +173,7 @@ Panel {
     root.tokenMalformed = false
   }
 
-  // Abandons a token check or save in progress (see tokenFlow).
-  function abandonTokenEntry() {
-    root.tokenFlow++
-    root.tokenBusy = false
-    root.tokenError = null
-  }
-
-  function cancelTokenEntry() {
-    root.abandonTokenEntry()
-    root.editingToken = false
-  }
-
-  function disconnect() {
-    root.abandonTokenEntry()
-    root.accountError = null
-    tokenStore.remove()
-  }
-
-  function finishDisconnect(ok) {
-    if (!ok) {
-      // The token file is still there, so the account stays connected.
-      root.accountError = Model.message("settings.disconnectFailed", tokenStore.displayPath)
-      return
-    }
+  function tokenDisconnected() {
     root.resetAccount()
     root.view = "main"
   }
@@ -263,7 +198,7 @@ Panel {
   function startTokenChange() {
     root.open()
     root.view = "main"
-    root.editingToken = true
+    tokenSession.startEditing()
   }
 
   function openUrl(url) {
@@ -279,9 +214,7 @@ Panel {
     if (opened) {
       refresh()
     } else {
-      editingToken = false
-      tokenError = null
-      accountError = null
+      tokenSession.reset()
       view = "main"
     }
   }
@@ -315,8 +248,14 @@ Panel {
 
   TokenStore {
     id: tokenStore
-    onSaved: function(ok) { root.finishTokenSave(ok) }
-    onRemoved: function(ok) { root.finishDisconnect(ok) }
+  }
+
+  TokenSession {
+    id: tokenSession
+    client: apiClient
+    store: tokenStore
+    onConnected: root.tokenConnected()
+    onDisconnected: root.tokenDisconnected()
   }
 
   Reminder {
@@ -485,8 +424,8 @@ Panel {
           onSettingChanged: function(key, value) { root.persistSetting(key, value) }
           onTestNotificationRequested: reminder.send(root.reviews, root.lessons)
           onChangeTokenRequested: root.startTokenChange()
-          accountError: root.accountError
-          onDisconnectRequested: root.disconnect()
+          accountError: tokenSession.accountError
+          onDisconnectRequested: tokenSession.disconnect()
           onEditingDone: body.forceActiveFocus()
         }
 
@@ -497,16 +436,17 @@ Panel {
           l10n: strings
           foreground: body.fg
           fontFamily: body.family
-          busy: root.tokenBusy
+          busy: tokenSession.busy
           rejected: root.tokenRejected
           malformed: root.tokenMalformed
-          editing: root.editingToken
-          error: root.tokenError
+          editing: tokenSession.editing
+          canCancel: tokenSession.canCancel
+          error: tokenSession.error
           tokenFromSettings: root.settingsToken !== ""
           savedPath: tokenStore.displayPath
-          onSubmitted: function(token) { root.submitToken(token) }
-          onEdited: root.tokenError = null
-          onCancelRequested: root.cancelTokenEntry()
+          onSubmitted: function(token) { tokenSession.submit(token) }
+          onEdited: tokenSession.clearError()
+          onCancelRequested: tokenSession.cancel()
           onDismissRequested: root.close()
           onGetTokenRequested: root.openUrl(Model.TOKEN_URL)
         }
