@@ -131,17 +131,6 @@ Panel {
     root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
-  // Removes one key from this widget's shell.json entry.
-  function removeSetting(key) {
-    if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
-    var current = root.settings || {}
-    if (!(key in current)) return
-    var entry = { id: root.moduleName }
-    for (var k in current) if (k !== "id" && k !== key) entry[k] = current[k]
-    root.settings = entry
-    root.bar.shell.updateEntryInline(root.moduleName, entry)
-  }
-
   function showSettings() {
     root.open()
     root.view = "settings"
@@ -168,13 +157,11 @@ Panel {
     }
   }
 
-  // A Disconnect on any screen returns every screen to its main view, and
-  // a migrated plaintext apiToken setting leaves shell.json.
+  // A Disconnect on any screen returns every screen to its main view.
   Connections {
     target: root.service
     ignoreUnknownSignals: true
     function onDisconnected() { root.view = "main" }
-    function onApiTokenSettingRetired() { root.removeSetting("apiToken") }
   }
 
   ShellIpc {
@@ -336,6 +323,7 @@ Panel {
           level: root.hasToken && root.user ? root.user.level : 0
           hasToken: root.hasToken
           hasStoredToken: root.hasToken
+          disconnectIncomplete: root.ready && root.tokenSession.disconnectIncomplete
           onSettingChanged: function(key, value) { root.persistSetting(key, value) }
           onTestNotificationRequested: if (root.ready) root.reminder.send(root.reviews, root.lessons)
           onChangeTokenRequested: root.startTokenChange()

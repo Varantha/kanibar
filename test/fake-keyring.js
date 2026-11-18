@@ -22,7 +22,8 @@ case "$1" in
   lookup) [ -f "$d/secret" ] || exit 1
           [ -e "$d/locked-dismiss" ] && exit 1
           rm -f "$d/locked"; cat "$d/secret"; exit 0 ;;
-  search) [ -f "$d/secret" ] || exit 0   # like the real one: no match is exit 0, no output
+  search) [ -e "$d/search-fails" ] && exit 1   # fails without a message
+          [ -f "$d/secret" ] || exit 0   # like the real one: no match is exit 0, no output
           echo "[/org/freedesktop/secrets/collection/login/1]"
           echo "label = Kanibar: WaniKani API token"
           locked || echo "secret = $(cat "$d/secret")"
@@ -39,8 +40,9 @@ exit 2
 
 // Creates the fake under `base`: bin/secret-tool and keyring/. `secret`
 // seeds a stored token; `down` is "all", "store" or "clear" to make that
-// part unreachable, or "locked" / "locked-dismiss" for a locked keyring
-// that unlocks on lookup / whose unlock prompt is dismissed. Returns { bin, dir, env, secret(), calls() }.
+// part unreachable, "locked" / "locked-dismiss" for a locked keyring that
+// unlocks on lookup / whose unlock prompt is dismissed, or "search-fails"
+// for a search that fails without a message. Returns { bin, dir, env, secret(), calls() }.
 function fakeKeyring(base, { secret = null, down = null } = {}) {
   const bin = path.join(base, "bin")
   const dir = path.join(base, "keyring")
@@ -48,7 +50,7 @@ function fakeKeyring(base, { secret = null, down = null } = {}) {
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(bin, "secret-tool"), SCRIPT, { mode: 0o755 })
   if (secret !== null) fs.writeFileSync(path.join(dir, "secret"), secret)
-  if (down) fs.writeFileSync(path.join(dir, down === "all" ? "down" : down.startsWith("locked") ? down : "down-" + down), "")
+  if (down) fs.writeFileSync(path.join(dir, down === "all" ? "down" : (down.startsWith("locked") || down === "search-fails") ? down : "down-" + down), "")
   return {
     bin, dir,
     env: { FAKE_KEYRING_DIR: dir },

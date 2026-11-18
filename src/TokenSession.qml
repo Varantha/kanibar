@@ -22,14 +22,17 @@ Item {
 
   // WaniKaniClient-like: get(path, callback(status, json), tokenOverride)
   required property var client
-  // TokenStore-like: save(token), remove(), legacyDisplayPath, signals
-  // saved(bool ok) and removed(bool ok, string reason)
+  // TokenStore-like: save(token), remove(), signals saved(bool ok) and
+  // removed(bool ok)
   required property var store
 
   property string phase: "idle"
   property bool editing: false      // "Change token" was clicked
   property var error: null          // Model message for the token entry, or null
   property var accountError: null   // Model message for a failed disconnect, or null
+  // A Disconnect that couldn't be confirmed. Its warning and a retry stay
+  // offered until one succeeds, whether or not a token is still active.
+  property bool disconnectIncomplete: false
 
   // Bumped by Cancel and Disconnect. A check or save from an older flow is
   // abandoned.
@@ -102,11 +105,12 @@ Item {
     session.store.remove()
   }
 
-  // Popup closed: forget messages, keep anything already in progress.
+  // Popup closed: forget messages, keep anything already in progress. The
+  // warning of an unfinished Disconnect stays until a retry succeeds.
   function reset() {
     session.editing = false
     session.error = null
-    session.accountError = null
+    if (!session.disconnectIncomplete) session.accountError = null
     session.clearCount++
   }
 
@@ -130,16 +134,17 @@ Item {
       session.connected()
     }
 
-    function onRemoved(ok, reason) {
-      if (!ok && reason !== "legacyFile") {
+    function onRemoved(ok) {
+      if (!ok) {
         // Maybe still in the keyring (e.g. locked). The store has already
-        // switched to what the keyring hands out, so nothing else to undo.
+        // switched to what the keyring hands out. Stay on the settings page
+        // with the warning and a retry.
+        session.disconnectIncomplete = true
         session.accountError = Model.message("settings.disconnectFailed")
         return
       }
-      // Gone from the keyring. An older token file that couldn't be deleted
-      // is reported, since a later start would import it again.
-      if (!ok) session.accountError = Model.message("settings.legacyFileLeft", session.store.legacyDisplayPath)
+      session.disconnectIncomplete = false
+      session.accountError = null
       session.clearCount++
       session.disconnected()
     }

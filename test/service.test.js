@@ -24,19 +24,13 @@ const skip = !hasQs ? "Quickshell (qs) is not installed" : !hasOmarchy ? "Omarch
 // `log(name, value)`; the final state is logged after `waitMs`.
 // Options: settings (the widget entry the screens hand over, default
 // refresh off and reminder off), tokenFile (whether the keyring holds a
-// token), legacyFile (a token file from an older version).
+// token), keyringDown (see fake-keyring.js).
 // reminderHandled: today's reminder already marked done (the default, so an
 // enabled reminder isn't due and tests never notify by accident).
-function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, reminderEnabled: false }, tokenFile = true, reminderHandled = true, legacyFile = null, keyringDown = null, legacyDirMode = null } = {}) {
+function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, reminderEnabled: false }, tokenFile = true, reminderHandled = true, keyringDown = null } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "kanibar-service-"))
   const config = path.join(base, "config")
-  const tokenDir = path.join(config, "kanibar")
   fs.mkdirSync(config, { recursive: true })
-  if (legacyFile !== null) {
-    fs.mkdirSync(tokenDir, { mode: 0o700 })
-    fs.writeFileSync(path.join(tokenDir, "token"), legacyFile + "\n", { mode: 0o600 })
-    if (legacyDirMode !== null) fs.chmodSync(tokenDir, legacyDirMode)
-  }
   // The real directory for the reminder state, kept inside the scratch HOME.
   const home = path.join(base, "home")
   // Today's reminder already handled, so an enabled reminder isn't due:
@@ -77,11 +71,9 @@ import "${"file://" + src}" as K
 ShellRoot {
   id: root
   function log(name, value) { console.log("RESULT " + JSON.stringify({ name: name, value: value })) }
-  property int retiredCount: 0
   K.Service {
     id: service
     settings: (${JSON.stringify(settings)})
-    onApiTokenSettingRetired: root.retiredCount++
   }
   // Two monitors' widgets: each holds the shared service and attaches to
   // it, as Panel does.
@@ -114,7 +106,6 @@ ShellRoot {
     encoding: "utf8",
     timeout: startMs + waitMs + 12000
   })
-  if (legacyDirMode !== null && fs.existsSync(tokenDir)) fs.chmodSync(tokenDir, 0o700)
   const results = { log: result.stdout + result.stderr }
   for (const line of (result.stdout + result.stderr).split("\n")) {
     const m = /RESULT (\{.*\})\s*$/.exec(line)
@@ -122,7 +113,6 @@ ShellRoot {
   }
   assert.ok(results.final, "harness produced no result:\n" + result.stdout + result.stderr)
   results.file = keyring.secret()   // what the keyring holds afterwards
-  results.legacyFileLeft = fs.existsSync(path.join(tokenDir, "token"))
   results.keyringCalls = keyring.calls()
   results.notifications = fs.existsSync(notifications) ? fs.readFileSync(notifications, "utf8").trim().split("\n").filter(Boolean) : []
   results.reminderMarked = fs.existsSync(stateFile) && fs.readFileSync(stateFile, "utf8").trim() === today
@@ -156,53 +146,6 @@ test("Two screens refreshing at once send one batch of requests", { skip }, () =
   const users = r.curlCalls.filter(c => c.includes("/v2/user")).length
   assert.equal(summaries, 2, "startup + one shared refresh:\n" + r.curlCalls.join("\n"))
   assert.equal(users, 2, r.curlCalls.join("\n"))
-})
-
-// ---------- Moving older storage into the keyring ----------
-
-test("A plaintext apiToken setting is moved into an empty keyring and retired", { skip }, () => {
-  const r = run(`log("retired", retiredCount)`, 2500, 800, { settings: { apiToken: NEW }, tokenFile: false })
-  assert.equal(r.file, NEW)
-  assert.equal(r.final.hasToken, true)
-  assert.equal(r.final.storeToken, NEW)
-  assert.equal(r.retired, 1)
-  assert.ok(!r.keyringCalls.some(c => c.includes(NEW)), "token on a command line")
-})
-
-test("A plaintext apiToken setting is dropped when the keyring already has a token", { skip }, () => {
-  const r = run(`log("retired", retiredCount)`, 2500, 800, { settings: { apiToken: NEW } })
-  assert.equal(r.file, OLD)                // the keyring's token wins and is kept
-  assert.equal(r.retired, 1)
-})
-
-test("A token file from an older version is moved into the keyring and deleted", { skip }, () => {
-  const r = run(``, 2500, 800, { tokenFile: false, legacyFile: NEW })
-  assert.equal(r.file, NEW)
-  assert.equal(r.legacyFileLeft, false)
-  assert.equal(r.final.storeToken, NEW)
-})
-
-test("A leftover token file is deleted when the keyring already has a token", { skip }, () => {
-  const r = run(``, 2500, 800, { legacyFile: NEW })
-  assert.equal(r.file, OLD)
-  assert.equal(r.legacyFileLeft, false)
-})
-
-// The dangerous case: the keyring answers but refuses to store. Deleting
-// the file then would lose the token.
-test("If the keyring refuses to store, the token file is kept", { skip }, () => {
-  const r = run(``, 2500, 800, { tokenFile: false, legacyFile: NEW, keyringDown: "store" })
-  assert.equal(r.legacyFileLeft, true)
-  assert.equal(r.file, null)
-  assert.equal(r.final.hasToken, false)
-})
-
-test("With the keyring unreachable, the token file and setting stay put", { skip }, () => {
-  const r = run(`log("retired", retiredCount)`, 2500, 800, { settings: { apiToken: NEW }, tokenFile: false, legacyFile: NEW, keyringDown: "all" })
-  assert.equal(r.legacyFileLeft, true)
-  assert.equal(r.retired, 0)
-  assert.equal(r.final.hasToken, false)
-  assert.equal(r.keyringAvailable, false)
 })
 
 // The regression a "wait for non-empty settings" guard caused: a widget
@@ -275,32 +218,4 @@ test("Removing the last widget during a popup refresh starts no detail requests"
   `, 4000, 2800)
   assert.equal(details(r), 0, r.curlCalls.join("\n"))
   assert.equal(r.final.user, "old-account")   // from the startup refresh, before detaching
-})
-
-// The previous version gave the apiToken setting precedence over the file.
-// With an empty keyring and both present, the setting's token must win,
-// and only one token is written.
-test("Migration prefers the apiToken setting over the token file", { skip }, () => {
-  const OTHER = "cccccccc-3333-4333-8333-333333333333"
-  const r = run(`log("retired", retiredCount)`, 2500, 800, { settings: { apiToken: NEW }, tokenFile: false, legacyFile: OTHER })
-  assert.equal(r.file, NEW)
-  assert.equal(r.final.storeToken, NEW)
-  assert.equal(r.legacyFileLeft, false)
-  assert.equal(r.retired, 1)
-  assert.equal(r.keyringCalls.filter(c => c.startsWith("store")).length, 1, r.keyringCalls.join("\n"))
-})
-
-// A token file that can't be deleted after migrating must be reported, and
-// a later Disconnect must not claim success while the file survives: the
-// next start would import it again.
-test("A token file that can't be deleted is reported, at migration and at Disconnect", { skip }, () => {
-  const r = run(`
-    log("afterMigration", service.tokenSession.accountError ? service.tokenSession.accountError.key : null)
-    service.tokenSession.disconnect()
-  `, 2500, 1500, { tokenFile: false, legacyFile: NEW, legacyDirMode: 0o500 })
-  assert.equal(r.afterMigration, "settings.legacyFileLeft")
-  assert.equal(r.legacyFileLeft, true)
-  assert.equal(r.file, null)                        // the keyring entry is gone
-  assert.equal(r.final.accountError, "settings.legacyFileLeft")
-  assert.equal(r.final.hasToken, false)
 })

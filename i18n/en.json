@@ -88,8 +88,8 @@
   "settings.notConnected": "Not connected.",
   "settings.changeToken": "Change token",
   "settings.disconnect": "Disconnect",
-  "settings.disconnectFailed": "Couldn't confirm the token was removed from your system keyring (is it locked or unreachable?). Unlock it and press Disconnect again.",
-  "settings.legacyFileLeft": "Couldn't delete the old token file %1. Delete it yourself, or kanibar will import it again on the next start.",
+  "settings.retryDisconnect": "Retry disconnect",
+  "settings.disconnectFailed": "Couldn't confirm the token was removed from your system keyring (is it locked or unreachable?). Kanibar stopped using it. Unlock the keyring and retry.",
 
   "reminder.headline": { "one": "%1 WaniKani review waiting", "other": "%1 WaniKani reviews waiting" },
   "reminder.body": "Clear them before the day ends to keep the pile small.",

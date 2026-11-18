@@ -42,6 +42,7 @@ ShellRoot {
   // entered), "locked-dismiss" stays locked (prompt dismissed).
   Process { id: locker }
   function lockKeyring(how) { locker.command = ["touch", "${keyring.dir}/" + how]; locker.running = true }
+  function unlockKeyring() { locker.command = ["rm", "-f", "${keyring.dir}/locked", "${keyring.dir}/locked-dismiss"]; locker.running = true }
   property int connectedCount: 0
   property int disconnectedCount: 0
   function log(name, value) { console.log("RESULT " + JSON.stringify({ name: name, value: value })) }
@@ -74,7 +75,7 @@ ShellRoot {
         accountError: session.accountError ? session.accountError.key : null,
         storeToken: store.token === "${OLD}" ? "old" : store.token === "${NEW}" ? "new" : store.token,
         connected: root.connectedCount, disconnected: root.disconnectedCount,
-        clearCount: session.clearCount
+        clearCount: session.clearCount, incomplete: session.disconnectIncomplete
       })
       Qt.quit()
     }
@@ -112,7 +113,7 @@ test("a pasted token is checked, saved and connected", { skip }, () => {
   ])
   assert.equal(r.phase, "checking")
   assert.equal(r.file, NEW)
-  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "new", connected: 1, disconnected: 0, clearCount: 1 })
+  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "new", connected: 1, disconnected: 0, clearCount: 1, incomplete: false })
 })
 
 test("Cancel while checking: nothing is saved and the old token stays", { skip }, () => {
@@ -122,7 +123,7 @@ test("Cancel while checking: nothing is saved and the old token stays", { skip }
   ])
   assert.equal(r.cancelled, true)
   assert.equal(r.file, OLD)
-  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "old", connected: 0, disconnected: 0, clearCount: 1 })
+  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "old", connected: 0, disconnected: 0, clearCount: 1, incomplete: false })
 })
 
 // The ordering from the audit: the check succeeds and the save starts, then
@@ -134,7 +135,7 @@ test("Cancel once saving has begun is refused", { skip }, () => {
   ])
   assert.deepEqual(r.during, { phase: "saving", canCancel: false, cancelled: false, editing: true })
   assert.equal(r.file, NEW)
-  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "new", connected: 1, disconnected: 0, clearCount: 1 })
+  assert.deepEqual(r.final, { phase: "idle", editing: false, error: null, accountError: null, storeToken: "new", connected: 1, disconnected: 0, clearCount: 1, incomplete: false })
 })
 
 test("Disconnect while checking: the checked token is never saved", { skip }, () => {
@@ -179,7 +180,7 @@ test("A token WaniKani rejects is not saved", { skip }, () => {
   ])
   assert.equal(r.file, OLD)
   // The rejected token stays in the field so it can be corrected.
-  assert.deepEqual(r.final, { phase: "idle", editing: true, error: "token.unknown", accountError: null, storeToken: "old", connected: 0, disconnected: 0, clearCount: 0 })
+  assert.deepEqual(r.final, { phase: "idle", editing: true, error: "token.unknown", accountError: null, storeToken: "old", connected: 0, disconnected: 0, clearCount: 0, incomplete: false })
 })
 
 test("Closing the popup clears a pasted token", { skip }, () => {
@@ -226,4 +227,29 @@ test("A failed Disconnect during a replacement never leaves the app on the old t
   assert.notEqual(r.final.storeToken, "old")        // not running on A
   assert.equal(r.final.accountError, "settings.disconnectFailed")
   assert.equal(r.final.connected, 0)
+})
+
+// Only a search that succeeded may confirm the token is gone. One that
+// fails without a message is "unknown", not "absent".
+test("A presence check that fails silently doesn't confirm a Disconnect", { skip }, () => {
+  const r = run([`session.disconnect()`], { keyringDown: "search-fails" })
+  assert.equal(r.final.accountError, "settings.disconnectFailed")
+  assert.equal(r.final.disconnected, 0)
+  assert.equal(r.final.incomplete, true)
+})
+
+// After an unconfirmed Disconnect the warning and retry must stay, even with
+// no token active and after the popup closed, until a retry succeeds.
+test("An unconfirmed Disconnect stays offered until a retry succeeds", { skip }, () => {
+  const r = run([
+    `lockKeyring("locked-dismiss")`,
+    `session.disconnect()`,
+    `session.reset(); log("afterClose", { incomplete: session.disconnectIncomplete, accountError: session.accountError ? session.accountError.key : null, storeToken: store.token })`,
+    `unlockKeyring(); session.disconnect()`,
+  ])
+  assert.deepEqual(r.afterClose, { incomplete: true, accountError: "settings.disconnectFailed", storeToken: "" })
+  assert.equal(r.file, null)
+  assert.equal(r.final.incomplete, false)
+  assert.equal(r.final.accountError, null)
+  assert.equal(r.final.disconnected, 1)
 })

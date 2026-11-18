@@ -58,74 +58,10 @@ Item {
   readonly property alias reminder: reminder
 
   // ---------- Settings ----------
-  // The token lives only in the keyring (TokenStore). Until the one-time
-  // migration below has run, no token is active, so no account is fetched
-  // that the migration might replace.
-  readonly property string apiToken: migrationDone ? tokenStore.token : ""
+  // The token lives only in the keyring (TokenStore).
+  readonly property string apiToken: tokenStore.token
   readonly property bool hasToken: apiToken !== ""
   readonly property bool keyringAvailable: tokenStore.available
-
-  // ---------- Moving older storage into the keyring ----------
-  // Older versions kept the token in ~/.config/kanibar/token, or as a
-  // plaintext apiToken setting in shell.json, which took precedence over
-  // the file. migrate() runs once, after a widget has handed over its
-  // settings and the keyring has answered, and writes at most one token:
-  // the keyring's own entry wins, then a valid apiToken setting, then the
-  // file. The setting is removed from shell.json (by the widgets) and the
-  // file deleted only once the keyring holds the chosen token; if the
-  // keyring refuses, both stay for the next start.
-  readonly property string legacySettingToken: String(setting("apiToken", "") || "").trim()
-  signal apiTokenSettingRetired()
-  property bool migrationDone: false
-  property bool migrating: false
-
-  function migrate() {
-    if (service.migrationDone || service.migrating) return
-    if (!service.attached || !tokenStore.loaded || !tokenStore.available) return
-    service.migrating = true
-    var setting = service.legacySettingToken
-    tokenStore.readLegacy(function(fileValue) {
-      var source = ""
-      if (tokenStore.token === "") {
-        if (Model.isValidToken(setting)) source = setting
-        else if (Model.isValidToken(fileValue)) source = fileValue
-      }
-      function cleanUp() {
-        if (setting !== "") service.apiTokenSettingRetired()
-        if (fileValue !== "") tokenStore.deleteLegacy(function(ok) {
-          if (!ok) tokenSession.accountError = Model.message("settings.legacyFileLeft", tokenStore.legacyDisplayPath)
-        })
-        service.migrating = false
-        service.migrationDone = true
-      }
-      if (source === "") {
-        cleanUp()
-        return
-      }
-      tokenStore.adopt(source, function(ok) {
-        if (ok) {
-          cleanUp()
-          return
-        }
-        // The keyring refused: keep the setting and the file for next time.
-        service.migrating = false
-        service.migrationDone = true
-      })
-    })
-  }
-
-  // An apiToken setting added after the migration gets the same treatment,
-  // without a file to consider: the keyring's entry still wins.
-  function migrateLateSetting() {
-    var value = service.legacySettingToken
-    if (!service.migrationDone || value === "" || !tokenStore.available) return
-    if (tokenStore.token !== "" || !Model.isValidToken(value)) {
-      service.apiTokenSettingRetired()
-      return
-    }
-    tokenStore.adopt(value, function(ok) { if (ok) service.apiTokenSettingRetired() })
-  }
-  onLegacySettingTokenChanged: Qt.callLater(migrateLateSetting)
 
   // 0 turns background refresh off (popup open and middle-click still refresh).
   readonly property int refreshMinutes: Model.intSetting(setting("refreshMinutes", Model.DEFAULT_REFRESH_MINUTES),
@@ -267,7 +203,6 @@ Item {
   }
   onAttachedChanged: {
     if (attached) {
-      Qt.callLater(service.migrate)
       Qt.callLater(function() { service.refresh(false) })
     } else {
       // Drop everything in flight; its results won't be used.
@@ -279,8 +214,6 @@ Item {
 
   TokenStore {
     id: tokenStore
-    onLoadedChanged: Qt.callLater(service.migrate)
-    onAvailableChanged: Qt.callLater(service.migrate)
   }
 
   TokenSession {

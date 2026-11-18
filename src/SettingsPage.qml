@@ -28,6 +28,7 @@ Column {
   property int level: 0
   property bool hasToken: false
   property bool hasStoredToken: false      // a token is in the keyring
+  property bool disconnectIncomplete: false // the last Disconnect couldn't be confirmed
   property var accountError: null          // Model message, e.g. a failed disconnect
 
   // True while a text field has focus, so the panel lets keys through.
@@ -197,8 +198,10 @@ Column {
       onActivated: page.changeTokenRequested()
     }
     LinkText {
-      visible: page.hasStoredToken
-      text: page.l10n.t("settings.disconnect")
+      // Also offered after an unconfirmed Disconnect, even with no token
+      // active any more, since that's the way to finish it.
+      visible: page.hasStoredToken || page.disconnectIncomplete
+      text: page.disconnectIncomplete ? page.l10n.t("settings.retryDisconnect") : page.l10n.t("settings.disconnect")
       foreground: page.foreground
       fontFamily: page.fontFamily
       onActivated: page.disconnectRequested()

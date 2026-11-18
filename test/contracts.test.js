@@ -131,7 +131,9 @@ test("a failed delete is reported, not treated as a disconnect", () => {
   // Process.running is still false right after a process is asked to start.
   assert.match(store, /function remove\(\) \{\s+if \(store\.saving\) \{\s+store\.removeQueued = true/)
   // TokenSession only reports a disconnect when the store says it worked.
-  assert.match(qmlSources["TokenSession.qml"], /function onRemoved\(ok, reason\) \{\s+if \(!ok && reason !== "legacyFile"\) \{/)
+  assert.match(qmlSources["TokenSession.qml"], /function onRemoved\(ok\) \{\s+if \(!ok\) \{/)
+  // Only a successful search is an answer.
+  assert.match(store, /var known = result\.found/)
 })
 
 // The token never goes on a command line: secret-tool gets it on stdin.
@@ -151,4 +153,12 @@ test("Panel hands over empty settings and attaches to the service", () => {
   assert.doesNotMatch(push, /Object\.keys|length/, "pushSettings must not skip empty settings")
   assert.match(panel, /Component\.onCompleted: syncService\(\)/)
   assert.match(panel, /Component\.onDestruction: if \(root\.attachedTo\) root\.attachedTo\.detach\(root\)/)
+})
+
+// After an unconfirmed Disconnect, the settings page keeps offering it
+// (as "Retry disconnect"), even with no token active.
+test("the Disconnect action stays visible while a Disconnect is incomplete", () => {
+  const page = qmlSources["SettingsPage.qml"]
+  assert.match(page, /visible: page\.hasStoredToken \|\| page\.disconnectIncomplete/)
+  assert.match(qmlSources["Panel.qml"], /disconnectIncomplete: root\.ready && root\.tokenSession\.disconnectIncomplete/)
 })
