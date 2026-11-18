@@ -161,14 +161,14 @@ The token is not a setting: it lives only in your system keyring.
 If you ran a pre-release build from before 0.6, it may have left a plaintext copy of the token behind, which this version ignores. Delete it and paste your token into the popup again:
 
 ```sh
-rm -f ~/.config/kanibar/token && rmdir ~/.config/kanibar 2>/dev/null
+rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/kanibar/token" && rmdir "${XDG_CONFIG_HOME:-$HOME/.config}/kanibar" 2>/dev/null
 ```
 
 Also remove any `"apiToken"` line from Kanibar's entry in `~/.config/omarchy/shell.json`.
 
 The settings page's **Account** section shows who you're connected as, and has:
 - **Change token:** opens the token field. The old token keeps working until the new one is verified.
-- **Disconnect:** removes the token from the keyring, checks that it's really gone, and clears the displayed data. If your keyring is locked, you're asked to unlock it. Kanibar stops using the token as soon as you press Disconnect. If the removal can't be confirmed, it says so and offers **Retry disconnect** (the popup opens on it) until it succeeds or you connect a new token.
+- **Disconnect:** removes the token from the keyring, checks that it's really gone, and clears the displayed data. If your keyring is locked, you're asked to unlock it. Kanibar stops using the token as soon as you press Disconnect. If the removal can't be confirmed, it says so and offers **Retry disconnect** (the popup opens on it) until it succeeds or you connect a new token. That only lasts for the session: while the token is still in the keyring, restarting the shell connects with it again. To finish, retry after unlocking the keyring, or delete *Kanibar: WaniKani API token* in Seahorse.
 
 ### Example `shell.json` entry
 

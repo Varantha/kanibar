@@ -41,6 +41,9 @@ Item {
   // tokens meanwhile, so a removal's retry can't delete a token saved
   // after it started.
   property bool removing: false
+  // Bumped by every save and removal; the startup lookup only applies its
+  // answer if none started while it ran.
+  property int operations: 0
 
   signal saved(bool ok)
   // ok is false when the removal couldn't be confirmed: the token may still
@@ -74,17 +77,20 @@ Item {
   }
 
   // done(value, unreachable) is optional; the result also updates `token`.
-  function lookup(done) {
+  // The startup lookup. Its answer is dropped if a save or removal started
+  // meanwhile: that newer operation decides the token, not this older read.
+  function lookup() {
+    var operations = store.operations
     store.secretTool(["lookup"].concat(store.attributes), null, function(result) {
       store.available = !result.unreachable
-      var value = result.found ? String(result.output).trim().slice(0, Model.MAX_TOKEN_CHARS) : ""
-      if (!result.unreachable) store.token = value
       store.loaded = true
-      if (done) done(value, result.unreachable)
+      if (operations !== store.operations || result.unreachable) return
+      store.token = result.found ? String(result.output).trim().slice(0, Model.MAX_TOKEN_CHARS) : ""
     })
   }
 
   function save(newToken) {
+    store.operations++
     store.saving = true
     store.pendingToken = newToken
     store.secretTool(["store", "--label=" + store.label].concat(store.attributes), newToken, function(result) {
@@ -96,13 +102,22 @@ Item {
   // Disconnect: the token stops being used immediately and stays unused
   // whatever the outcome, so a failed or partial removal can never leave
   // the app running on it (or on a different one than stored).
+  //
+  // A second request while one is running joins it (one removal, one
+  // result), so repeated clicks can't start overlapping removals.
   function remove() {
+    if (store.removing) return
     store.removing = true
+    store.operations++
     store.token = ""
     if (store.saving) {
       store.removeQueued = true
       return
     }
+    store.startRemoval()
+  }
+
+  function startRemoval() {
     store.clearConfirmed(1, function(ok) {
       store.removing = false
       store.removed(ok)
@@ -163,7 +178,7 @@ Item {
     if (ok && !removeNext) store.token = store.pendingToken
     store.pendingToken = ""
     store.saved(ok && !removeNext)
-    if (removeNext) store.remove()
+    if (removeNext) store.startRemoval()   // `removing` is already set
   }
 
 

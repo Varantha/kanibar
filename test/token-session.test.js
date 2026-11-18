@@ -285,3 +285,56 @@ test("Connecting a new token retires an unfinished Disconnect", { skip }, () => 
   assert.equal(r.final.storeToken, "new")
   assert.equal(r.final.connected, 1)
 })
+
+// ---------- Overlapping actions (the release gate) ----------
+// Whatever overlaps, the latest user action decides the account: no older
+// operation may reactivate a token or delete a newer one.
+
+const clears = (r) => r.calls.filter(c => c.startsWith("clear")).length
+
+test("Pressing Disconnect twice runs one removal", { skip }, () => {
+  const r = run([`session.disconnect(); session.disconnect(); session.disconnect()`])
+  assert.equal(clears(r), 1, r.calls.join("\n"))
+  assert.equal(r.final.disconnected, 1)
+  assert.equal(r.file, null)
+})
+
+test("Repeated Retry clicks join one removal and keep a new token out until it ends", { skip }, () => {
+  const r = run([
+    `lockKeyring("locked-dismiss")`,
+    `session.disconnect()`,
+    `unlockKeyring(); session.disconnect(); session.disconnect(); log("busyDuringRetry", session.busy); session.startEditing(); session.submit("${NEW}"); log("phaseDuringRetry", session.phase)`,
+  ])
+  assert.equal(r.busyDuringRetry, true)
+  assert.equal(r.phaseDuringRetry, "idle")          // the new token was refused
+  // First attempt: clear + retry clear. One joined retry: one more.
+  assert.equal(clears(r), 3, r.calls.join("\n"))
+  assert.equal(r.file, null)
+  assert.equal(r.final.disconnected, 1)
+})
+
+test("A new token can't be submitted before the startup lookup answers", { skip }, () => {
+  // Step 1 runs at 0.6s; the slow lookup answers at about 1.5s.
+  const r = run([
+    `log("busyBeforeLookup", session.busy); session.startEditing(); session.submit("${NEW}"); log("phase", session.phase)`,
+    `log("loaded", store.loaded)`,
+    `log("afterLookup", { busy: session.busy, token: store.token === "${OLD}" ? "old" : store.token })`,
+  ], { keyringDown: "slow-lookup" })
+  assert.equal(r.busyBeforeLookup, true)
+  assert.equal(r.phase, "idle")
+  assert.deepEqual(r.afterLookup, { busy: false, token: "old" })
+  assert.equal(r.file, OLD)
+})
+
+test("A save during the startup lookup isn't overwritten by its older answer", { skip }, () => {
+  // Bypasses the session's guard to prove the store's own: a save that
+  // starts while the slow lookup runs wins over the lookup's answer.
+  const r = run([
+    `store.save("${NEW}")`,
+    `log("after", store.token === "${NEW}" ? "new" : store.token === "${OLD}" ? "old" : store.token)`,
+    ``,
+  ], { keyringDown: "slow-lookup" })
+  assert.equal(r.after, "new")
+  assert.equal(r.final.storeToken, "new")
+  assert.equal(r.file, NEW)
+})

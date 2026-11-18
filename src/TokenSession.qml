@@ -44,9 +44,11 @@ Item {
   // ready to reconnect with one click.
   property int clearCount: 0
 
-  // Also busy while a Disconnect is still removing the token, so a new one
-  // can't be saved and then deleted by that removal.
-  readonly property bool busy: phase !== "idle" || store.removing
+  // Also busy while a Disconnect is still removing the token (so a new one
+  // can't be saved and then deleted by that removal), and until the
+  // startup lookup has answered (so its older answer can't replace a new
+  // token).
+  readonly property bool busy: phase !== "idle" || store.removing || !store.loaded
   readonly property bool canCancel: phase !== "saving"
 
   // A newly entered token is saved and active.

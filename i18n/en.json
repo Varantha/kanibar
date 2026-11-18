@@ -89,7 +89,7 @@
   "settings.changeToken": "Change token",
   "settings.disconnect": "Disconnect",
   "settings.retryDisconnect": "Retry disconnect",
-  "settings.disconnectFailed": "Couldn't confirm the token was removed from your system keyring (is it locked or unreachable?). Kanibar stopped using it. Unlock the keyring and retry.",
+  "settings.disconnectFailed": "Couldn't confirm the token was removed from your system keyring (is it locked or unreachable?). Kanibar stopped using it for now, but it may still be stored and would be used again after a restart. Unlock the keyring and retry, or delete it in Seahorse.",
 
   "reminder.headline": { "one": "%1 WaniKani review waiting", "other": "%1 WaniKani reviews waiting" },
   "reminder.body": "Clear them before the day ends to keep the pile small.",
