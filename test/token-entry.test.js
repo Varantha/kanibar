@@ -1,6 +1,7 @@
 // UI regression tests for the token field: the real TokenEntry (with
 // Omarchy's own TextField and Button) wired to the real TokenSession and
-// TokenStore, in Quickshell, with a scratch XDG_CONFIG_HOME and a fake API
+// TokenStore, in Quickshell, with a fake keyring, a scratch XDG_CONFIG_HOME
+// and a fake API
 // client. A pasted token must not stay in the field, ready to reconnect with
 // one click. Skipped where Quickshell or Omarchy's shell isn't installed.
 // Run with: node --test test/
@@ -11,6 +12,7 @@ const os = require("node:os")
 const path = require("node:path")
 const { spawnSync } = require("node:child_process")
 const { src } = require("./load-model")
+const { fakeKeyring } = require("./fake-keyring")
 
 const OLD = "aaaaaaaa-1111-4111-8111-111111111111"
 const NEW = "bbbbbbbb-2222-4222-8222-222222222222"
@@ -22,9 +24,8 @@ const STEP_MS = 600
 
 function run(steps) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "kanibar-entry-"))
-  const tokenDir = path.join(base, "config", "kanibar")
-  fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 })
-  fs.writeFileSync(path.join(tokenDir, "token"), OLD + "\n", { mode: 0o600 })
+  fs.mkdirSync(path.join(base, "config"), { recursive: true })
+  const keyring = fakeKeyring(base, { secret: OLD })
   const harness = path.join(base, "harness")
   fs.mkdirSync(harness)
   // "qs.Commons" and "qs.Ui" resolve against the config root.
@@ -88,7 +89,7 @@ ShellRoot {
 }
 `)
   const result = spawnSync("qs", ["-p", harness], {
-    env: { ...process.env, XDG_CONFIG_HOME: path.join(base, "config") },
+    env: { ...process.env, ...keyring.env, XDG_CONFIG_HOME: path.join(base, "config"), PATH: keyring.bin + ":" + process.env.PATH },
     encoding: "utf8",
     timeout: (steps.length + 4) * STEP_MS + 8000
   })

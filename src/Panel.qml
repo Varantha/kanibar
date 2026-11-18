@@ -40,7 +40,7 @@ Panel {
 
   // Every screen's widget shares one shell.json entry; any of them can hand
   // it over. An entry with only defaults arrives as {} and is handed over
-  // too: removing the last override (say apiToken) must reach the service.
+  // too: removing the last override must reach the service.
   function pushSettings() {
     if (root.service && root.settings && typeof root.settings === "object") root.service.settings = root.settings
   }
@@ -69,7 +69,7 @@ Panel {
   readonly property var reminder: ready ? service.reminder : null
 
   // ---------- Account state, from the service ----------
-  readonly property string settingsToken: ready ? service.settingsToken : ""
+  readonly property bool keyringAvailable: !ready || service.keyringAvailable
   readonly property bool hasToken: ready && service.hasToken
   readonly property var summary: ready ? service.summary : null
   readonly property var user: ready ? service.user : null
@@ -131,6 +131,17 @@ Panel {
     root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
+  // Removes one key from this widget's shell.json entry.
+  function removeSetting(key) {
+    if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
+    var current = root.settings || {}
+    if (!(key in current)) return
+    var entry = { id: root.moduleName }
+    for (var k in current) if (k !== "id" && k !== key) entry[k] = current[k]
+    root.settings = entry
+    root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
   function showSettings() {
     root.open()
     root.view = "settings"
@@ -157,11 +168,13 @@ Panel {
     }
   }
 
-  // A Disconnect on any screen returns every screen to its main view.
+  // A Disconnect on any screen returns every screen to its main view, and
+  // a migrated plaintext apiToken setting leaves shell.json.
   Connections {
     target: root.service
     ignoreUnknownSignals: true
     function onDisconnected() { root.view = "main" }
+    function onApiTokenSettingRetired() { root.removeSetting("apiToken") }
   }
 
   ShellIpc {
@@ -322,8 +335,7 @@ Panel {
           username: root.hasToken && root.user ? root.user.username : ""
           level: root.hasToken && root.user ? root.user.level : 0
           hasToken: root.hasToken
-          tokenFromSettings: root.settingsToken !== ""
-          tokenFromFile: root.ready && root.tokenStore.token !== ""
+          hasStoredToken: root.hasToken
           onSettingChanged: function(key, value) { root.persistSetting(key, value) }
           onTestNotificationRequested: if (root.ready) root.reminder.send(root.reviews, root.lessons)
           onChangeTokenRequested: root.startTokenChange()
@@ -346,8 +358,7 @@ Panel {
           canCancel: !root.ready || root.tokenSession.canCancel
           clearCount: root.ready ? root.tokenSession.clearCount : 0
           error: root.ready ? root.tokenSession.error : null
-          tokenFromSettings: root.settingsToken !== ""
-          savedPath: root.ready ? root.tokenStore.displayPath : ""
+          keyringAvailable: root.keyringAvailable
           onSubmitted: function(token) { if (root.ready) root.tokenSession.submit(token) }
           onEdited: if (root.ready) root.tokenSession.clearError()
           onCancelRequested: if (root.ready) root.tokenSession.cancel()

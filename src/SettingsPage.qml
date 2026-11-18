@@ -27,8 +27,7 @@ Column {
   property string username: ""
   property int level: 0
   property bool hasToken: false
-  property bool tokenFromSettings: false   // apiToken in shell.json wins over the file
-  property bool tokenFromFile: false
+  property bool hasStoredToken: false      // a token is in the keyring
   property var accountError: null          // Model message, e.g. a failed disconnect
 
   // True while a text field has focus, so the panel lets keys through.
@@ -198,7 +197,7 @@ Column {
       onActivated: page.changeTokenRequested()
     }
     LinkText {
-      visible: page.tokenFromFile && !page.tokenFromSettings
+      visible: page.hasStoredToken
       text: page.l10n.t("settings.disconnect")
       foreground: page.foreground
       fontFamily: page.fontFamily
@@ -214,12 +213,5 @@ Column {
     fontFamily: page.fontFamily
     font.pixelSize: Style.font.bodySmall
   }
-  CaptionText {
-    visible: page.tokenFromSettings
-    width: parent.width
-    wrapMode: Text.WordWrap
-    text: page.l10n.t("settings.usingApiToken")
-    foreground: page.foreground
-    fontFamily: page.fontFamily
-  }
+
 }

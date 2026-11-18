@@ -22,8 +22,8 @@ Item {
 
   // WaniKaniClient-like: get(path, callback(status, json), tokenOverride)
   required property var client
-  // TokenStore-like: save(token), remove(), path, displayPath,
-  // signals saved(bool ok) and removed(bool ok)
+  // TokenStore-like: save(token), remove(), signals saved(bool ok) and
+  // removed(bool ok)
   required property var store
 
   property string phase: "idle"
@@ -122,7 +122,7 @@ Item {
       session.phase = "idle"
       if (abandoned) return   // disconnected meanwhile; the removal follows
       if (!ok) {
-        session.error = Model.message("token.writeFailed", session.store.path)
+        session.error = Model.message("token.writeFailed")
         return
       }
       session.editing = false
@@ -133,7 +133,7 @@ Item {
     function onRemoved(ok) {
       if (!ok) {
         // The token file is still there, so the account stays connected.
-        session.accountError = Model.message("settings.disconnectFailed", session.store.displayPath)
+        session.accountError = Model.message("settings.disconnectFailed")
         return
       }
       session.clearCount++

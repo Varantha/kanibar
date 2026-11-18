@@ -1,5 +1,6 @@
 // Behavioral tests for the token entry flow: runs the real TokenSession and
-// TokenStore in Quickshell, with a scratch XDG_CONFIG_HOME and a fake API
+// TokenStore in Quickshell, with a fake keyring (test/fake-keyring.js), a
+// scratch XDG_CONFIG_HOME and a fake API
 // client whose answer the scenario releases at a chosen moment. That makes
 // orderings like "check succeeds, save starts, then Cancel" reproducible.
 // Skipped where Quickshell (qs) isn't installed. Run with: node --test test/
@@ -10,6 +11,7 @@ const os = require("node:os")
 const path = require("node:path")
 const { spawnSync } = require("node:child_process")
 const { src } = require("./load-model")
+const { fakeKeyring } = require("./fake-keyring")
 
 const OLD = "aaaaaaaa-1111-4111-8111-111111111111"
 const NEW = "bbbbbbbb-2222-4222-8222-222222222222"
@@ -20,13 +22,12 @@ const hasQs = spawnSync("sh", ["-c", "command -v qs"]).status === 0
 // session, store, client.answer(status), log(name, value).
 const STEP_MS = 600
 
-function run(steps, { tokenDirMode } = {}) {
+// keyringDown: "store" or "clear" makes that keyring call fail as unreachable.
+function run(steps, { keyringDown = null } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "kanibar-session-"))
   const config = path.join(base, "config")
-  const tokenDir = path.join(config, "kanibar")
-  fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 })
-  fs.writeFileSync(path.join(tokenDir, "token"), OLD + "\n", { mode: 0o600 })
-  if (tokenDirMode !== undefined) fs.chmodSync(tokenDir, tokenDirMode)
+  fs.mkdirSync(config, { recursive: true })
+  const keyring = fakeKeyring(base, { secret: OLD, down: keyringDown })
 
   const harness = path.join(base, "harness")
   fs.mkdirSync(harness)
@@ -81,19 +82,18 @@ ShellRoot {
 }
 `)
   const result = spawnSync("qs", ["-p", harness], {
-    env: { ...process.env, XDG_CONFIG_HOME: config },
+    env: { ...process.env, ...keyring.env, XDG_CONFIG_HOME: config, PATH: keyring.bin + ":" + process.env.PATH },
     encoding: "utf8",
     timeout: (steps.length + 4) * STEP_MS + 8000
   })
-  if (tokenDirMode !== undefined) fs.chmodSync(tokenDir, 0o700)
   const results = {}
   for (const line of (result.stdout + result.stderr).split("\n")) {
     const m = /RESULT (\{.*\})\s*$/.exec(line)
     if (m) { const r = JSON.parse(m[1]); results[r.name] = r.value }
   }
   assert.ok(results.final, "harness produced no result:\n" + result.stdout + result.stderr)
-  const file = path.join(tokenDir, "token")
-  results.file = fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : null
+  results.file = keyring.secret()   // what the keyring holds afterwards
+  results.calls = keyring.calls()
   return results
 }
 
@@ -156,7 +156,7 @@ test("Disconnect while saving: the save finishes, then the token is removed", { 
 })
 
 test("A failed delete keeps the account connected and says so", { skip }, () => {
-  const r = run([`session.disconnect()`], { tokenDirMode: 0o500 })
+  const r = run([`session.disconnect()`], { keyringDown: "clear" })
   assert.equal(r.file, OLD)
   assert.equal(r.final.storeToken, "old")
   assert.equal(r.final.accountError, "settings.disconnectFailed")

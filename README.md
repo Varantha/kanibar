@@ -28,6 +28,7 @@ kanibar is an Omarchy shell plugin. It shows your pending WaniKani reviews and l
 - A WaniKani account and a **read-only** personal access token.
 - A CJK font for the 鰐 glyph and the kanji grid. Omarchy ships Noto CJK by default.
 - `curl` 8.4 or newer, for the API requests. Omarchy ships it.
+- A system keyring reachable through libsecret (`secret-tool`) for the token. Omarchy ships `gnome-keyring` and `libsecret`, with a default keyring that has no password and is always unlocked.
 
 ## Install
 
@@ -55,7 +56,7 @@ On first launch the pill shows `鰐 —`. Click it, and the popup asks for a tok
 2. Create a token. Leave every permission **unchecked**: kanibar only needs read access.
 3. Paste it into the field and press **Enter** (or click **Connect**).
 
-kanibar checks the token's format, verifies it with WaniKani, and only then saves it to `~/.config/kanibar/token`, readable only by you (mode 600). A typo or wrong token shows an error and nothing is saved. If WaniKani rejects a saved token later (for example because you revoked it), the popup asks for a new one.
+kanibar checks the token's format, verifies it with WaniKani, and only then saves it in your system keyring (gnome-keyring on Omarchy), where you can also see it in Seahorse as *Kanibar: WaniKani API token*. A typo or wrong token shows an error and nothing is saved. If WaniKani rejects a saved token later (for example because you revoked it), the popup asks for a new one.
 
 ## Using it
 
@@ -155,13 +156,11 @@ The minimum number of waiting reviews needed to send a reminder. Raise it if a h
 
 ### Account
 
-#### `apiToken`: WaniKani API token (advanced)
-*String, default `""`.*
-Normally you don't need this: the token you paste into the popup is saved to `~/.config/kanibar/token`. If `apiToken` is set in `shell.json`, it **takes precedence** over that file. That's useful if you manage your config elsewhere, but keep in mind `shell.json` often ends up in dotfiles repositories.
+The token is not a setting: it lives only in your system keyring. Versions before 0.6 kept it in `~/.config/kanibar/token` or, optionally, as a plaintext `apiToken` setting in `shell.json`. kanibar moves either into the keyring on first start and then deletes the file and removes the setting.
 
 The settings page's **Account** section shows who you're connected as, and has:
 - **Change token:** opens the token field. The old token keeps working until the new one is verified.
-- **Disconnect:** deletes `~/.config/kanibar/token` and clears the displayed data. (Not shown when the token comes from `apiToken`.)
+- **Disconnect:** removes the token from the keyring and clears the displayed data.
 
 ### Example `shell.json` entry
 
@@ -210,7 +209,8 @@ Only English ships so far. Translations are welcome:
 ## Privacy and API usage
 
 - **Read-only.** kanibar only reads from the API. It can't start lessons, submit reviews or change settings on your account.
-- **Token storage.** The token is saved to `~/.config/kanibar/token` with mode 600, written through stdin so it never appears in the process list. Before saving, kanibar checks that `~/.config/kanibar` is a real directory you own and sets it to mode 700. A new token then goes into a fresh private file that atomically replaces the old one, so it is never written into an existing file, or a directory, that others might be able to read or change. It's sent only to `api.wanikani.com`, and only if it has the exact format of a WaniKani API token.
+- **Token storage.** The token is kept in your system keyring through libsecret's `secret-tool` (gnome-keyring on Omarchy), not in a kanibar file or in `shell.json`. It reaches `secret-tool` on stdin and comes back on stdout, so it never appears in the process list. It's sent only to `api.wanikani.com`, and only if it has the exact format of a WaniKani API token.
+- **What the keyring does and doesn't protect.** It keeps the token out of kanibar's own code and out of config files that tend to end up in dotfiles. It doesn't shield the token from programs running as you: any of them can ask the keyring for it, as with any app's secret on Linux. Whether it's encrypted on disk depends on your keyring's password. Omarchy's default keyring has none, so its file in `~/.local/share/keyrings` is unencrypted and readable only by you. To encrypt it, set a password on the keyring in Seahorse; you'll then be asked to unlock it once per session, the first time an app needs a secret.
 - **Defensive by default.** Every request goes to the fixed HTTPS address `api.wanikani.com` through `curl`, gives up after 15 seconds, and is dropped if the response exceeds 2 MB. The token reaches curl on stdin, never on the command line. Redirects are never followed, so the token can't be forwarded to another host, and your `~/.curlrc` is ignored so it can't change that. Data from the API is validated before use: counts are kept within sane ranges, lists are capped, and text such as usernames and kanji meanings is length-limited and always shown as plain text, never interpreted as markup.
 - **Requests.**
   - **Background refresh:** 2 requests (`/summary`, `/user`) every `refreshMinutes` and after each full hour. You can turn this off.
@@ -218,8 +218,8 @@ Only English ships so far. Translations are welcome:
   - **Daily reminder:** 1 request.
 
   This is well under WaniKani's limit of 60 requests per minute.
-- **Files kanibar writes:**
-  - `~/.config/kanibar/token`: your API token.
+- **What kanibar stores:**
+  - Your API token, in the system keyring (service `io.github.erfoip.kanibar`).
   - `~/.local/state/omarchy/kanibar-reminder`: the date of the last reminder.
   - Your settings, in `~/.config/omarchy/shell.json`.
 
@@ -227,7 +227,8 @@ Only English ships so far. Translations are welcome:
 
 ```sh
 omarchy plugin remove io.github.erfoip.kanibar
-rm -rf ~/.config/kanibar ~/.local/state/omarchy/kanibar-reminder
+secret-tool clear service io.github.erfoip.kanibar account wanikani-api-token
+rm -f ~/.local/state/omarchy/kanibar-reminder
 ```
 
 Consider also revoking the token on WaniKani's token page.
@@ -251,7 +252,7 @@ omarchy restart shell                              # QML hot reload is unreliabl
 | `src/Service.qml` | Runs once for all monitors: account state, refreshes, token store and entry flow, reminder |
 | `src/Panel.qml` | The bar widget, once per monitor: a view onto the service, plus the popup layout |
 | `src/WaniKaniClient.qml` | HTTPS requests with timeout and size cap |
-| `src/TokenStore.qml` | Reads, saves and removes `~/.config/kanibar/token` |
+| `src/TokenStore.qml` | Looks up, saves and removes the token in the system keyring (`secret-tool`); moves an older token file into it |
 | `src/TokenSession.qml` | Token entry flow: check, save, cancel and disconnect, in a fixed order |
 | `src/Reminder.qml` | Daily review reminder and its notification |
 | `src/BarPill.qml`, `SettingsPage.qml`, `TokenEntry.qml`, `CountTiles.qml`, `LevelProgress.qml`, `SrsBreakdown.qml`, `ReviewForecast.qml` | Views: read state, emit intent |
@@ -260,7 +261,7 @@ omarchy restart shell                              # QML hot reload is unreliabl
 | `src/Model.js` | Pure parsing, validation and placeholder helpers (no QML), unit-tested in `test/` |
 | `src/Palette.js` | Colors derived from the bar foreground |
 | `i18n/` | Translation catalogs (`en.json`) |
-| `test/` | `model.test.js`: Model.js unit tests. `contracts.test.js`: every string exists in `en.json` and is used, every text renders plain text, animations stay within Omarchy's motion rules. `token-store.test.js`, `transport.test.js`: the token save script and curl, run for real. `token-session.test.js`, `service.test.js`, `token-entry.test.js`: the token entry flow, the shared service (including two screens acting at once) and the token field, run in Quickshell (skipped without `qs` and Omarchy's shell) |
+| `test/` | `model.test.js`: Model.js unit tests. `contracts.test.js`: every string exists in `en.json` and is used, every text renders plain text, animations stay within Omarchy's motion rules. `transport.test.js`: curl, run for real. `fake-keyring.js`: a stand-in `secret-tool`, so tests never touch your real keyring. `token-session.test.js`, `service.test.js`, `token-entry.test.js`: the token entry flow, the shared service (including two screens acting at once) and the token field, run in Quickshell (skipped without `qs` and Omarchy's shell) |
 | `preview.png` | Marketplace preview |
 
 ## License

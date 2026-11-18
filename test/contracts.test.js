@@ -120,13 +120,22 @@ test("the client drops results from a previous token", () => {
 
 test("a failed delete is reported, not treated as a disconnect", () => {
   const store = qmlSources["TokenStore.qml"]
-  assert.match(store, /onExited: function\(exitCode\) \{ store\.finishRemove\(exitCode === 0\) \}/)
-  assert.match(store, /if \(ok\) \{\s+store\.discardPendingRead\(\)\s+store\.token = ""/)
+  // "Nothing to clear" counts as removed; an unreachable keyring doesn't.
+  assert.match(store, /store\.finishRemove\(!result\.unreachable\)/)
+  assert.match(store, /if \(ok\) store\.token = ""/)
   // A removal during a save waits for it. This must use the store's own flag:
   // Process.running is still false right after a process is asked to start.
   assert.match(store, /function remove\(\) \{\s+if \(store\.saving\) \{\s+store\.removeQueued = true/)
   // TokenSession only reports a disconnect when the store says it worked.
   assert.match(qmlSources["TokenSession.qml"], /function onRemoved\(ok\) \{\s+if \(!ok\) \{/)
+})
+
+// The token never goes on a command line: secret-tool gets it on stdin.
+test("the token reaches secret-tool only on stdin", () => {
+  const store = qmlSources["TokenStore.qml"]
+  const calls = [...store.matchAll(/secretTool\(([^\n]*)/g)].map(m => m[1])
+  assert.ok(calls.length >= 4, calls.join("\n"))
+  for (const call of calls) assert.doesNotMatch(call.split("),")[0], /token|value|Token/, "argv built from a token: " + call)
 })
 
 // An entry with only defaults arrives as {} and must still reach the

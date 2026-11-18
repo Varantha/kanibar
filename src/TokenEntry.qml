@@ -22,8 +22,7 @@ Column {
   property int clearCount: 0
   onClearCountChanged: tokenField.text = ""
   property var error: null             // Model message or null
-  property bool tokenFromSettings: false
-  property string savedPath: ""
+  property bool keyringAvailable: true
 
   readonly property alias input: tokenField
 
@@ -90,14 +89,16 @@ Column {
     font.pixelSize: Style.font.bodySmall
   }
 
-  CaptionText {
+  PlainText {
     width: parent.width
-    visible: entry.tokenFromSettings
+    visible: !entry.keyringAvailable
     wrapMode: Text.WordWrap
-    text: entry.l10n.t("token.settingsOverride")
-    foreground: entry.foreground
+    text: entry.l10n.t("token.keyringUnavailable")
+    foreground: Commons.Color.urgent
     fontFamily: entry.fontFamily
+    font.pixelSize: Style.font.bodySmall
   }
+
 
   Row {
     spacing: Style.space(12)
@@ -121,7 +122,7 @@ Column {
   CaptionText {
     width: parent.width
     wrapMode: Text.WordWrap
-    text: Model.fill(entry.l10n.t("token.savedTo"), entry.savedPath)
+    text: entry.l10n.t("token.savedTo")
     foreground: entry.foreground
     fontFamily: entry.fontFamily
   }

@@ -3,34 +3,94 @@ import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
 
-// The API token on disk at $XDG_CONFIG_HOME/kanibar/token (mode 600). The
-// popup saves here; hand-written files work too.
+// The API token in the system keyring. On Omarchy that is gnome-keyring
+// (in the base install, also used by Chromium and the Secret portal),
+// reached through libsecret's secret-tool. Storing the token is the
+// keyring's job; this file only stores, looks up and clears one entry. The
+// token travels over stdin and stdout, never argv, so it doesn't show up in
+// the process list.
+//
+// What the keyring adds is a well-tested place for the token outside
+// Kanibar's own code and config, not protection from programs running as
+// the user: the Secret Service has no per-app access control. Encryption
+// at rest depends on the keyring having a password. Omarchy's default
+// keyring has none, so it is always unlocked and its file in
+// ~/.local/share/keyrings is unencrypted, readable only by the user.
+//
+// Older versions kept the token in $XDG_CONFIG_HOME/kanibar/token. On the
+// first lookup that finds nothing in the keyring, that file is moved in
+// and then deleted. If the keyring already holds a token, a leftover file
+// is just deleted. If the keyring can't be reached, the file is left alone.
 Item {
   id: store
 
-  readonly property string directory: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/kanibar"
-  readonly property string path: directory + "/token"
-  // The path with $HOME shown as ~, for display.
-  readonly property string displayPath: path.replace(Quickshell.env("HOME"), "~")
-  // What the file holds right now ("" when missing).
+  // How the entry is found in the keyring, and what Seahorse shows for it.
+  readonly property var attributes: ["service", Model.PLUGIN_ID, "account", "wanikani-api-token"]
+  readonly property string label: "Kanibar: WaniKani API token"
+  readonly property string legacyDirectory: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/kanibar"
+  readonly property string legacyPath: legacyDirectory + "/token"
+
+  // The token in the keyring ("" when there is none).
   property string token: ""
+  // The first lookup has finished.
+  property bool loaded: false
+  // False when the last keyring call couldn't reach the keyring at all.
+  property bool available: true
 
   property string pendingToken: ""
-  // True from save() until its result is in. Process.running isn't enough:
-  // it only turns true once the process has actually started.
+  // True from save() until its result is in.
   property bool saving: false
-  // A removal asked for while a save was still writing. It runs once the
+  // A removal asked for while a save was still running. It runs once the
   // save is done, so the save can't land after it and bring the token back.
   property bool removeQueued: false
 
   signal saved(bool ok)
-  // ok is false when the token file could not be deleted and is still there.
+  // ok is false when the token could not be removed and is still stored.
   signal removed(bool ok)
+
+  Component.onCompleted: store.lookup()
+
+  // ---------- Keyring calls ----------
+  // Runs secret-tool and calls done(result) once, with result.found (exit 0),
+  // result.unreachable (it failed and said why on stderr; "not found"
+  // fails silently) and result.output.
+  function secretTool(args, input, done) {
+    var proc = secretToolProcess.createObject(store, { command: ["secret-tool"].concat(args) })
+    var exitCode = null
+    var output = null
+    var errors = null
+    function settle() {
+      if (exitCode === null || output === null || errors === null) return
+      proc.destroy()
+      done({ found: exitCode === 0, unreachable: exitCode !== 0 && errors.trim() !== "", output: output })
+    }
+    proc.started.connect(function() {
+      if (input !== null) proc.write(input)
+      proc.stdinEnabled = false   // EOF: secret-tool store reads the secret to the end
+    })
+    proc.out.streamFinished.connect(function() { output = proc.out.text; settle() })
+    proc.err.streamFinished.connect(function() { errors = proc.err.text; settle() })
+    proc.exited.connect(function(code) { exitCode = code; settle() })
+    proc.running = true
+  }
+
+  function lookup() {
+    store.secretTool(["lookup"].concat(store.attributes), null, function(result) {
+      store.available = !result.unreachable
+      var value = result.found ? String(result.output).trim().slice(0, Model.MAX_TOKEN_CHARS) : ""
+      store.token = value
+      store.loaded = true
+      if (!result.unreachable) store.migrateLegacyFile(value !== "")
+    })
+  }
 
   function save(newToken) {
     store.saving = true
     store.pendingToken = newToken
-    saveProc.running = true
+    store.secretTool(["store", "--label=" + store.label].concat(store.attributes), newToken, function(result) {
+      store.available = !result.unreachable
+      store.finishSave(result.found)
+    })
   }
 
   function remove() {
@@ -38,89 +98,78 @@ Item {
       store.removeQueued = true
       return
     }
-    removeProc.running = true
+    store.secretTool(["clear"].concat(store.attributes), null, function(result) {
+      // Nothing to clear fails silently, and counts as removed.
+      store.available = !result.unreachable
+      store.finishRemove(!result.unreachable)
+    })
   }
 
   function finishSave(ok) {
     store.saving = false
     var removeNext = store.removeQueued
     store.removeQueued = false
-    // Use it right away (the FileView watch confirms it moments later),
-    // unless a removal is waiting: then the new token never becomes active.
+    // Unless a removal is waiting: then the new token never becomes active.
     if (ok && !removeNext) store.token = store.pendingToken
     store.pendingToken = ""
     store.saved(ok && !removeNext)
-    if (removeNext) removeProc.running = true
+    if (removeNext) store.remove()
   }
 
   function finishRemove(ok) {
-    // On failure the file is still there, and so is the token.
-    if (ok) {
-      store.discardPendingRead()
-      store.token = ""
-    }
+    // On failure the token is still stored, and so still active.
+    if (ok) store.token = ""
     store.removed(ok)
   }
 
-  // A read of the token file can still be in flight when it is deleted, and
-  // FileView.reload() joins a running read instead of starting a new one, so
-  // that read could deliver the deleted token afterwards. Changing the path
-  // cancels it (FileView drops results of a disowned read), and setting it
-  // back starts a fresh read that finds the file gone.
-  function discardPendingRead() {
-    tokenFile.path = ""
-    tokenFile.path = store.path
+  // Stores a token found elsewhere (an older version's file or setting)
+  // without going through the token entry flow. done(ok).
+  function adopt(value, done) {
+    store.secretTool(["store", "--label=" + store.label].concat(store.attributes), value, function(result) {
+      store.available = !result.unreachable
+      if (result.found) store.token = value
+      done(result.found)
+    })
   }
 
-  // First makes sure the token directory is ours and private: it must be a
-  // real directory (not a symlink) owned by us, and is set to 0700. The
-  // temp file below is reopened by name, so another account that could add
-  // or remove entries in the directory could otherwise swap in its own file
-  // and receive the token. mkdir -p leaves an existing directory's mode as
-  // it was, so this can't rely on umask.
-  //
-  // Never writes into an existing token file either: its mode might let
-  // other accounts read it, and a reader that opened it earlier keeps
-  // access. Instead the token goes into a new file created private (0600)
-  // next to it, which then replaces the old one with an atomic rename. The
-  // rename also replaces a symlink at that path rather than writing through
-  // it. The token travels over stdin, never argv, so it doesn't show up in
-  // the process list.
-  readonly property string saveScript: [
-    "umask 077",
-    "mkdir -p \"$1\" || exit 1",
-    "[ -d \"$1\" ] && [ ! -L \"$1\" ] && [ -O \"$1\" ] || exit 1",
-    "chmod 700 \"$1\" || exit 1",
-    "tmp=$(mktemp \"$1/.token.XXXXXX\") || exit 1",
-    "trap 'rm -f \"$tmp\"' EXIT",
-    "chmod 600 \"$tmp\" || exit 1",
-    "IFS= read -r t || exit 1",
-    "printf '%s\\n' \"$t\" > \"$tmp\" || exit 1",
-    "mv -fT \"$tmp\" \"$1/token\" || exit 1",
-    "trap - EXIT"
-  ].join("\n")
-
-  Process {
-    id: saveProc
-    stdinEnabled: true
-    command: ["sh", "-c", store.saveScript, "sh", store.directory]
-    onStarted: write(store.pendingToken + "\n")
-    onExited: function(exitCode) { store.finishSave(exitCode === 0) }
+  // ---------- Moving an older token file into the keyring ----------
+  function migrateLegacyFile(keyringHasToken) {
+    legacyRead.keyringHasToken = keyringHasToken
+    legacyRead.running = true
   }
 
   Process {
-    id: removeProc
-    command: ["rm", "-f", store.path]
-    onExited: function(exitCode) { store.finishRemove(exitCode === 0) }
+    id: legacyRead
+    property bool keyringHasToken: false
+    command: ["cat", store.legacyPath]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var value = String(text || "").trim()
+        if (value === "") return   // no file
+        if (legacyRead.keyringHasToken || !Model.isValidToken(value)) {
+          legacyDelete.running = true
+          return
+        }
+        store.adopt(value, function(ok) {
+          if (ok) legacyDelete.running = true   // otherwise keep the file for next time
+        })
+      }
+    }
   }
 
-  FileView {
-    id: tokenFile
-    path: store.path
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reload()
-    onLoaded: store.token = String(text() || "").trim().slice(0, Model.MAX_TOKEN_CHARS)
-    onLoadFailed: store.token = ""
+  // The file only goes once the keyring has the token (or never needed it).
+  Process {
+    id: legacyDelete
+    command: ["sh", "-c", "rm -f \"$1/token\" && rmdir \"$1\" 2>/dev/null; exit 0", "sh", store.legacyDirectory]
+  }
+
+  property Component secretToolProcess: Component {
+    Process {
+      property alias out: outCollector
+      property alias err: errCollector
+      stdinEnabled: true
+      stdout: StdioCollector { id: outCollector }
+      stderr: StdioCollector { id: errCollector }
+    }
   }
 }

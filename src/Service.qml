@@ -17,7 +17,7 @@ Item {
   property var shell: null
   // Pushed by the bar widgets: their (shared) shell.json entry without its
   // id. An entry with only defaults is {}, which is valid: a key that is
-  // missing means its default, including no apiToken override.
+  // missing means its default.
   property var settings: ({})
 
   // The bar widgets currently on screen (one per monitor). The service can
@@ -58,9 +58,30 @@ Item {
   readonly property alias reminder: reminder
 
   // ---------- Settings ----------
-  readonly property string settingsToken: String(setting("apiToken", "") || "").trim()
-  readonly property string apiToken: settingsToken !== "" ? settingsToken : tokenStore.token
+  // The token lives only in the keyring (TokenStore).
+  readonly property string apiToken: tokenStore.token
   readonly property bool hasToken: apiToken !== ""
+  readonly property bool keyringAvailable: tokenStore.available
+
+  // Older versions also accepted the token as a plaintext apiToken setting
+  // in shell.json, which often ends up in dotfiles. Once the keyring is
+  // reachable it is moved there (or dropped if the keyring already has
+  // one), and the widgets remove it from shell.json.
+  readonly property string legacySettingToken: String(setting("apiToken", "") || "").trim()
+  signal apiTokenSettingRetired()
+
+  function retireApiTokenSetting() {
+    if (!service.tokenStore.loaded || !service.tokenStore.available || service.legacySettingToken === "") return
+    var value = service.legacySettingToken
+    if (service.tokenStore.token !== "" || !Model.isValidToken(value)) {
+      service.apiTokenSettingRetired()
+      return
+    }
+    service.tokenStore.adopt(value, function(ok) {
+      if (ok) service.apiTokenSettingRetired()   // otherwise keep it for next time
+    })
+  }
+  onLegacySettingTokenChanged: Qt.callLater(retireApiTokenSetting)
   // 0 turns background refresh off (popup open and middle-click still refresh).
   readonly property int refreshMinutes: Model.intSetting(setting("refreshMinutes", Model.DEFAULT_REFRESH_MINUTES),
                                                          Model.DEFAULT_REFRESH_MINUTES, 0, Model.MAX_REFRESH_MINUTES)
@@ -212,6 +233,7 @@ Item {
 
   TokenStore {
     id: tokenStore
+    onLoadedChanged: if (loaded) Qt.callLater(service.retireApiTokenSetting)
   }
 
   TokenSession {

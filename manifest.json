@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.erfoip.kanibar",
   "name": "Kanibar",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "author": "erfoip",
   "license": "MIT",
   "description": "WaniKani reviews and lessons in your bar, with a popup for level progress, SRS stages, the review forecast and an optional daily reminder.",
@@ -21,7 +21,6 @@
     "category": "Info",
     "allowMultiple": false,
     "defaults": {
-      "apiToken": "",
       "refreshMinutes": 10,
       "showLessons": true,
       "hideWhenIdle": false,
@@ -31,13 +30,6 @@
       "reminderMinReviews": 1
     },
     "schema": [
-      {
-        "key": "apiToken",
-        "type": "string",
-        "label": "WaniKani API token",
-        "defaultValue": "",
-        "description": "Optional. Normally you paste your token into the popup, which saves it to ~/.config/kanibar/token. A token set here takes precedence over that file."
-      },
       {
         "key": "refreshMinutes",
         "type": "integer",

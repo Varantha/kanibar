@@ -1,5 +1,6 @@
 // Behavioral tests for Service.qml, the one instance every screen's widget
-// shares: runs it in Quickshell with a scratch XDG_CONFIG_HOME and a fake
+// shares: runs it in Quickshell with a fake keyring, a scratch
+// XDG_CONFIG_HOME and a fake
 // curl on PATH that answers slowly and logs each call. Two "screens" act on
 // the same service, as two monitors' widgets do. Skipped where Quickshell
 // (qs) isn't installed. Run with: node --test test/
@@ -10,6 +11,7 @@ const os = require("node:os")
 const path = require("node:path")
 const { spawnSync } = require("node:child_process")
 const { src } = require("./load-model")
+const { fakeKeyring } = require("./fake-keyring")
 
 const OLD = "aaaaaaaa-1111-4111-8111-111111111111"
 const NEW = "bbbbbbbb-2222-4222-8222-222222222222"
@@ -21,15 +23,19 @@ const skip = !hasQs ? "Quickshell (qs) is not installed" : !hasOmarchy ? "Omarch
 // `script` runs at start with `service`, `screenA`, `screenB` and
 // `log(name, value)`; the final state is logged after `waitMs`.
 // Options: settings (the widget entry the screens hand over, default
-// refresh off and reminder off), tokenFile (whether a saved token exists).
+// refresh off and reminder off), tokenFile (whether the keyring holds a
+// token), legacyFile (a token file from an older version).
 // reminderHandled: today's reminder already marked done (the default, so an
 // enabled reminder isn't due and tests never notify by accident).
-function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, reminderEnabled: false }, tokenFile = true, reminderHandled = true } = {}) {
+function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, reminderEnabled: false }, tokenFile = true, reminderHandled = true, legacyFile = null, keyringDown = null } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "kanibar-service-"))
   const config = path.join(base, "config")
   const tokenDir = path.join(config, "kanibar")
-  fs.mkdirSync(tokenDir, { recursive: true, mode: 0o700 })
-  if (tokenFile) fs.writeFileSync(path.join(tokenDir, "token"), OLD + "\n", { mode: 0o600 })
+  fs.mkdirSync(config, { recursive: true })
+  if (legacyFile !== null) {
+    fs.mkdirSync(tokenDir, { mode: 0o700 })
+    fs.writeFileSync(path.join(tokenDir, "token"), legacyFile + "\n", { mode: 0o600 })
+  }
   // The real directory for the reminder state, kept inside the scratch HOME.
   const home = path.join(base, "home")
   // Today's reminder already handled, so an enabled reminder isn't due:
@@ -41,8 +47,8 @@ function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, re
   const today = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0")
   if (reminderHandled) fs.writeFileSync(stateFile, today + "\n")
 
-  const bin = path.join(base, "bin")
-  fs.mkdirSync(bin)
+  const keyring = fakeKeyring(base, { secret: tokenFile ? OLD : null, down: keyringDown })
+  const bin = keyring.bin
   const calls = path.join(base, "curl-calls")
   // One body for every endpoint: a user, and three reviews due since 2020.
   fs.writeFileSync(path.join(bin, "curl"), `#!/bin/sh
@@ -70,9 +76,11 @@ import "${"file://" + src}" as K
 ShellRoot {
   id: root
   function log(name, value) { console.log("RESULT " + JSON.stringify({ name: name, value: value })) }
+  property int retiredCount: 0
   K.Service {
     id: service
     settings: (${JSON.stringify(settings)})
+    onApiTokenSettingRetired: root.retiredCount++
   }
   // Two monitors' widgets: each holds the shared service and attaches to
   // it, as Panel does.
@@ -93,13 +101,14 @@ ShellRoot {
         sessionPhase: service.tokenSession.phase
       })
       log("background", { attached: service.attached, backgroundRefresh: service.backgroundRefresh, reminderActive: service.reminder.active })
+      log("keyringAvailable", service.keyringAvailable)
       Qt.quit()
     }
   }
 }
 `)
   const result = spawnSync("qs", ["-p", harness], {
-    env: { ...process.env, XDG_CONFIG_HOME: config, HOME: home, PATH: bin + ":" + process.env.PATH },
+    env: { ...process.env, ...keyring.env, XDG_CONFIG_HOME: config, HOME: home, PATH: bin + ":" + process.env.PATH },
     encoding: "utf8",
     timeout: startMs + waitMs + 12000
   })
@@ -109,8 +118,9 @@ ShellRoot {
     if (m) { const r = JSON.parse(m[1]); results[r.name] = r.value }
   }
   assert.ok(results.final, "harness produced no result:\n" + result.stdout + result.stderr)
-  const file = path.join(tokenDir, "token")
-  results.file = fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : null
+  results.file = keyring.secret()   // what the keyring holds afterwards
+  results.legacyFileLeft = fs.existsSync(path.join(tokenDir, "token"))
+  results.keyringCalls = keyring.calls()
   results.notifications = fs.existsSync(notifications) ? fs.readFileSync(notifications, "utf8").trim().split("\n").filter(Boolean) : []
   results.reminderMarked = fs.existsSync(stateFile) && fs.readFileSync(stateFile, "utf8").trim() === today
   results.curlCalls = fs.existsSync(calls) ? fs.readFileSync(calls, "utf8").trim().split("\n").filter(Boolean) : []
@@ -145,21 +155,51 @@ test("Two screens refreshing at once send one batch of requests", { skip }, () =
   assert.equal(users, 2, r.curlCalls.join("\n"))
 })
 
-// An entry with only defaults arrives as {}. Removing the last override,
-// here the apiToken, must reach the service and drop that token.
-test("Removing apiToken as the last override drops that token", { skip }, () => {
-  const r = run(`
-    log("before", { hasToken: service.hasToken, settingsToken: service.settingsToken === "${NEW}" })
-    log("callsBefore", 0)
-    service.settings = ({})
-    service.refresh(false)
-  `, 2500, 2800, { settings: { apiToken: NEW }, tokenFile: false })
-  assert.deepEqual(r.before, { hasToken: true, settingsToken: true })
+// ---------- Moving older storage into the keyring ----------
+
+test("A plaintext apiToken setting is moved into an empty keyring and retired", { skip }, () => {
+  const r = run(`log("retired", retiredCount)`, 2500, 800, { settings: { apiToken: NEW }, tokenFile: false })
+  assert.equal(r.file, NEW)
+  assert.equal(r.final.hasToken, true)
+  assert.equal(r.final.storeToken, NEW)
+  assert.equal(r.retired, 1)
+  assert.ok(!r.keyringCalls.some(c => c.includes(NEW)), "token on a command line")
+})
+
+test("A plaintext apiToken setting is dropped when the keyring already has a token", { skip }, () => {
+  const r = run(`log("retired", retiredCount)`, 2500, 800, { settings: { apiToken: NEW } })
+  assert.equal(r.file, OLD)                // the keyring's token wins and is kept
+  assert.equal(r.retired, 1)
+})
+
+test("A token file from an older version is moved into the keyring and deleted", { skip }, () => {
+  const r = run(``, 2500, 800, { tokenFile: false, legacyFile: NEW })
+  assert.equal(r.file, NEW)
+  assert.equal(r.legacyFileLeft, false)
+  assert.equal(r.final.storeToken, NEW)
+})
+
+test("A leftover token file is deleted when the keyring already has a token", { skip }, () => {
+  const r = run(``, 2500, 800, { legacyFile: NEW })
+  assert.equal(r.file, OLD)
+  assert.equal(r.legacyFileLeft, false)
+})
+
+// The dangerous case: the keyring answers but refuses to store. Deleting
+// the file then would lose the token.
+test("If the keyring refuses to store, the token file is kept", { skip }, () => {
+  const r = run(``, 2500, 800, { tokenFile: false, legacyFile: NEW, keyringDown: "store" })
+  assert.equal(r.legacyFileLeft, true)
+  assert.equal(r.file, null)
   assert.equal(r.final.hasToken, false)
-  assert.equal(r.final.user, null)
-  assert.equal(r.final.summary, false)
-  // Only the startup refresh with the override token; nothing after removal.
-  assert.equal(r.curlCalls.filter(c => c.includes("/v2/summary")).length, 1, r.curlCalls.join("\n"))
+})
+
+test("With the keyring unreachable, the token file and setting stay put", { skip }, () => {
+  const r = run(`log("retired", retiredCount)`, 2500, 800, { settings: { apiToken: NEW }, tokenFile: false, legacyFile: NEW, keyringDown: "all" })
+  assert.equal(r.legacyFileLeft, true)
+  assert.equal(r.retired, 0)
+  assert.equal(r.final.hasToken, false)
+  assert.equal(r.keyringAvailable, false)
 })
 
 // The regression a "wait for non-empty settings" guard caused: a widget
