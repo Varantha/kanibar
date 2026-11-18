@@ -120,14 +120,18 @@ test("the client drops results from a previous token", () => {
 
 test("a failed delete is reported, not treated as a disconnect", () => {
   const store = qmlSources["TokenStore.qml"]
-  // "Nothing to clear" counts as removed; an unreachable keyring doesn't.
-  assert.match(store, /store\.finishRemove\(!result\.unreachable\)/)
-  assert.match(store, /if \(ok\) store\.token = ""/)
+  // A removal only counts once a search (which sees locked items too) no
+  // longer finds the entry; clear's exit code confirms nothing.
+  const confirm = store.slice(store.indexOf("function clearConfirmed("), store.indexOf("function isStored("))
+  assert.match(confirm, /store\.isStored\(/)
+  assert.match(confirm, /\} else if \(!present\) \{\s+store\.token = ""\s+done\(true\)/)
+  assert.match(store, /\["search", "--all"\]/)
+  assert.doesNotMatch(store, /"--unlock"/, "the check must not unlock")
   // A removal during a save waits for it. This must use the store's own flag:
   // Process.running is still false right after a process is asked to start.
   assert.match(store, /function remove\(\) \{\s+if \(store\.saving\) \{\s+store\.removeQueued = true/)
   // TokenSession only reports a disconnect when the store says it worked.
-  assert.match(qmlSources["TokenSession.qml"], /function onRemoved\(ok\) \{\s+if \(!ok\) \{/)
+  assert.match(qmlSources["TokenSession.qml"], /function onRemoved\(ok, reason\) \{\s+if \(!ok && reason !== "legacyFile"\) \{/)
 })
 
 // The token never goes on a command line: secret-tool gets it on stdin.

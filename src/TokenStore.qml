@@ -17,10 +17,9 @@ import "Model.js" as Model
 // keyring has none, so it is always unlocked and its file in
 // ~/.local/share/keyrings is unencrypted, readable only by the user.
 //
-// Older versions kept the token in $XDG_CONFIG_HOME/kanibar/token. On the
-// first lookup that finds nothing in the keyring, that file is moved in
-// and then deleted. If the keyring already holds a token, a leftover file
-// is just deleted. If the keyring can't be reached, the file is left alone.
+// Older versions kept the token in $XDG_CONFIG_HOME/kanibar/token. This
+// file only reads and deletes that file; Service.migrate() decides, once,
+// which older token (if any) moves into the keyring.
 Item {
   id: store
 
@@ -29,6 +28,7 @@ Item {
   readonly property string label: "Kanibar: WaniKani API token"
   readonly property string legacyDirectory: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/kanibar"
   readonly property string legacyPath: legacyDirectory + "/token"
+  readonly property string legacyDisplayPath: legacyPath.replace(Quickshell.env("HOME"), "~")
 
   // The token in the keyring ("" when there is none).
   property string token: ""
@@ -45,8 +45,10 @@ Item {
   property bool removeQueued: false
 
   signal saved(bool ok)
-  // ok is false when the token could not be removed and is still stored.
-  signal removed(bool ok)
+  // ok is false when a token could not be removed: reason "keyring" (still
+  // in the keyring, e.g. locked) or "legacyFile" (an older version's token
+  // file couldn't be deleted, so a later start would import it again).
+  signal removed(bool ok, string reason)
 
   Component.onCompleted: store.lookup()
 
@@ -74,13 +76,14 @@ Item {
     proc.running = true
   }
 
-  function lookup() {
+  // done(value, unreachable) is optional; the result also updates `token`.
+  function lookup(done) {
     store.secretTool(["lookup"].concat(store.attributes), null, function(result) {
       store.available = !result.unreachable
       var value = result.found ? String(result.output).trim().slice(0, Model.MAX_TOKEN_CHARS) : ""
-      store.token = value
+      if (!result.unreachable) store.token = value
       store.loaded = true
-      if (!result.unreachable) store.migrateLegacyFile(value !== "")
+      if (done) done(value, result.unreachable)
     })
   }
 
@@ -98,10 +101,59 @@ Item {
       store.removeQueued = true
       return
     }
-    store.secretTool(["clear"].concat(store.attributes), null, function(result) {
-      // Nothing to clear fails silently, and counts as removed.
+    store.clearConfirmed(1, function(ok) {
+      if (!ok) {
+        store.removed(false, "keyring")
+        return
+      }
+      // An older version's token file must go too, or a later start
+      // would import it again.
+      store.deleteLegacy(function(fileGone) { store.removed(fileGone, fileGone ? "" : "legacyFile") })
+    })
+  }
+
+  // secret-tool clear exits 1 silently both when there was nothing to clear
+  // and when the entry is locked (libsecret only deletes unlocked items), so
+  // its exit code confirms nothing. A lookup can't confirm it either: for a
+  // locked entry whose unlock prompt is dismissed it also reports "not
+  // found". A search without unlocking lists matching items whether locked
+  // or not (libsecret's load_items), so that is the check. If the entry is
+  // still there, a lookup asks the user to unlock the keyring and the
+  // removal is tried once more. When it still fails, `token` becomes what
+  // the keyring hands out (nothing, if it stays locked), so the app never
+  // keeps running on a different token than the one stored.
+  function clearConfirmed(retries, done) {
+    store.secretTool(["clear"].concat(store.attributes), null, function(cleared) {
+      store.available = !cleared.unreachable
+      // Unreachable: what's stored is unknown, so stop using the token
+      // rather than risk running on a different one than the keyring holds.
+      if (cleared.unreachable) {
+        store.token = ""
+        done(false)
+        return
+      }
+      store.isStored(function(present, unreachable) {
+        if (unreachable) {
+          store.token = ""
+          done(false)
+        } else if (!present) {
+          store.token = ""
+          done(true)
+        } else if (retries > 0) {
+          store.lookup(function() { store.clearConfirmed(retries - 1, done) })
+        } else {
+          store.lookup(function() { done(false) })
+        }
+      })
+    })
+  }
+
+  // done(present, unreachable): whether the keyring holds the entry at all,
+  // locked or not. Never prompts.
+  function isStored(done) {
+    store.secretTool(["search", "--all"].concat(store.attributes), null, function(result) {
       store.available = !result.unreachable
-      store.finishRemove(!result.unreachable)
+      done(!result.unreachable && /^\[/m.test(String(result.output)), result.unreachable)
     })
   }
 
@@ -116,14 +168,10 @@ Item {
     if (removeNext) store.remove()
   }
 
-  function finishRemove(ok) {
-    // On failure the token is still stored, and so still active.
-    if (ok) store.token = ""
-    store.removed(ok)
-  }
 
   // Stores a token found elsewhere (an older version's file or setting)
-  // without going through the token entry flow. done(ok).
+  // without going through the token entry flow. done(ok). Used only by
+  // Service.migrate().
   function adopt(value, done) {
     store.secretTool(["store", "--label=" + store.label].concat(store.attributes), value, function(result) {
       store.available = !result.unreachable
@@ -132,35 +180,45 @@ Item {
     })
   }
 
-  // ---------- Moving an older token file into the keyring ----------
-  function migrateLegacyFile(keyringHasToken) {
-    legacyRead.keyringHasToken = keyringHasToken
-    legacyRead.running = true
+  // ---------- An older version's token file ----------
+  // done(value): its trimmed contents, or "" when there is no file.
+  function readLegacy(done) {
+    var proc = legacyReadProcess.createObject(store, {})
+    var exitCode = null
+    var output = null
+    function settle() {
+      if (exitCode === null || output === null) return
+      proc.destroy()
+      done(exitCode === 0 ? String(output).trim() : "")
+    }
+    proc.out.streamFinished.connect(function() { output = proc.out.text; settle() })
+    proc.exited.connect(function(code) { exitCode = code; settle() })
+    proc.running = true
   }
 
-  Process {
-    id: legacyRead
-    property bool keyringHasToken: false
-    command: ["cat", store.legacyPath]
-    stdout: StdioCollector {
-      onStreamFinished: {
-        var value = String(text || "").trim()
-        if (value === "") return   // no file
-        if (legacyRead.keyringHasToken || !Model.isValidToken(value)) {
-          legacyDelete.running = true
-          return
-        }
-        store.adopt(value, function(ok) {
-          if (ok) legacyDelete.running = true   // otherwise keep the file for next time
-        })
-      }
+  // done(ok): ok once the file is confirmed gone (or was never there). The
+  // then-empty directory is removed if possible; that part is optional.
+  function deleteLegacy(done) {
+    var proc = legacyDeleteProcess.createObject(store, {})
+    proc.exited.connect(function(code) {
+      proc.destroy()
+      done(code === 0)
+    })
+    proc.running = true
+  }
+
+  property Component legacyReadProcess: Component {
+    Process {
+      property alias out: legacyOut
+      command: ["cat", store.legacyPath]
+      stdout: StdioCollector { id: legacyOut }
     }
   }
 
-  // The file only goes once the keyring has the token (or never needed it).
-  Process {
-    id: legacyDelete
-    command: ["sh", "-c", "rm -f \"$1/token\" && rmdir \"$1\" 2>/dev/null; exit 0", "sh", store.legacyDirectory]
+  property Component legacyDeleteProcess: Component {
+    Process {
+      command: ["sh", "-c", "rm -f \"$1/token\"; [ ! -e \"$1/token\" ] || exit 1; rmdir \"$1\" 2>/dev/null; exit 0", "sh", store.legacyDirectory]
+    }
   }
 
   property Component secretToolProcess: Component {

@@ -34,9 +34,14 @@ function run(steps, { keyringDown = null } = {}) {
   fs.writeFileSync(path.join(harness, "shell.qml"), `
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import "${"file://" + src}" as K
 ShellRoot {
   id: root
+  // Locks the fake keyring: "locked" unlocks on the next lookup (password
+  // entered), "locked-dismiss" stays locked (prompt dismissed).
+  Process { id: locker }
+  function lockKeyring(how) { locker.command = ["touch", "${keyring.dir}/" + how]; locker.running = true }
   property int connectedCount: 0
   property int disconnectedCount: 0
   function log(name, value) { console.log("RESULT " + JSON.stringify({ name: name, value: value })) }
@@ -94,6 +99,7 @@ ShellRoot {
   assert.ok(results.final, "harness produced no result:\n" + result.stdout + result.stderr)
   results.file = keyring.secret()   // what the keyring holds afterwards
   results.calls = keyring.calls()
+  results.stillLocked = fs.existsSync(path.join(keyring.dir, "locked")) || fs.existsSync(path.join(keyring.dir, "locked-dismiss"))
   return results
 }
 
@@ -155,10 +161,13 @@ test("Disconnect while saving: the save finishes, then the token is removed", { 
   assert.equal(r.final.phase, "idle")
 })
 
-test("A failed delete keeps the account connected and says so", { skip }, () => {
+// The keyring can't be reached, so whether the token is still stored is
+// unknown: the failure is reported and the app stops using the token
+// rather than risk running on a different one than stored.
+test("A Disconnect the keyring can't confirm is reported, and the token is no longer used", { skip }, () => {
   const r = run([`session.disconnect()`], { keyringDown: "clear" })
-  assert.equal(r.file, OLD)
-  assert.equal(r.final.storeToken, "old")
+  assert.equal(r.file, OLD)                         // still safely stored
+  assert.equal(r.final.storeToken, "")
   assert.equal(r.final.accountError, "settings.disconnectFailed")
   assert.equal(r.final.disconnected, 0)
 })
@@ -177,4 +186,44 @@ test("Closing the popup clears a pasted token", { skip }, () => {
   const r = run([`session.startEditing(); session.reset()`])
   assert.equal(r.final.clearCount, 1)
   assert.equal(r.final.editing, false)
+})
+
+// ---------- The keyring locking after the token was loaded ----------
+// secret-tool clear deletes nothing on a locked keyring and exits like
+// "nothing to clear"; Disconnect must not take that as success.
+
+test("Disconnect on a locked keyring finishes once the user unlocks it", { skip }, () => {
+  const r = run([
+    `lockKeyring("locked")`,
+    `session.disconnect()`,
+  ])
+  assert.equal(r.file, null)                       // really gone
+  assert.equal(r.final.storeToken, "")
+  assert.equal(r.final.disconnected, 1)
+  assert.equal(r.final.accountError, null)
+})
+
+test("Disconnect on a locked keyring with the unlock prompt dismissed is reported, not claimed", { skip }, () => {
+  const r = run([
+    `lockKeyring("locked-dismiss")`,
+    `session.disconnect()`,
+  ])
+  assert.equal(r.file, OLD)                         // still stored
+  assert.equal(r.final.accountError, "settings.disconnectFailed")
+  assert.equal(r.final.disconnected, 0)
+  // The app stops using it rather than pretend either way.
+  assert.equal(r.final.storeToken, "")
+})
+
+// Replacing A with B while Disconnect waits, and the delete then fails:
+// the app must not keep running on A while the keyring holds B.
+test("A failed Disconnect during a replacement never leaves the app on the old token", { skip }, () => {
+  const r = run([
+    `session.startEditing(); session.submit("${NEW}")`,
+    `client.answer(200); session.disconnect()`,
+  ], { keyringDown: "clear" })
+  assert.equal(r.file, NEW)                         // the replacement was saved
+  assert.notEqual(r.final.storeToken, "old")        // not running on A
+  assert.equal(r.final.accountError, "settings.disconnectFailed")
+  assert.equal(r.final.connected, 0)
 })

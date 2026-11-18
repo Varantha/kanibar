@@ -27,7 +27,7 @@ const skip = !hasQs ? "Quickshell (qs) is not installed" : !hasOmarchy ? "Omarch
 // token), legacyFile (a token file from an older version).
 // reminderHandled: today's reminder already marked done (the default, so an
 // enabled reminder isn't due and tests never notify by accident).
-function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, reminderEnabled: false }, tokenFile = true, reminderHandled = true, legacyFile = null, keyringDown = null } = {}) {
+function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, reminderEnabled: false }, tokenFile = true, reminderHandled = true, legacyFile = null, keyringDown = null, legacyDirMode = null } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "kanibar-service-"))
   const config = path.join(base, "config")
   const tokenDir = path.join(config, "kanibar")
@@ -35,6 +35,7 @@ function run(script, waitMs, startMs = 800, { settings = { refreshMinutes: 0, re
   if (legacyFile !== null) {
     fs.mkdirSync(tokenDir, { mode: 0o700 })
     fs.writeFileSync(path.join(tokenDir, "token"), legacyFile + "\n", { mode: 0o600 })
+    if (legacyDirMode !== null) fs.chmodSync(tokenDir, legacyDirMode)
   }
   // The real directory for the reminder state, kept inside the scratch HOME.
   const home = path.join(base, "home")
@@ -98,7 +99,8 @@ ShellRoot {
         hasToken: service.hasToken, storeToken: service.tokenStore.token,
         user: service.user ? service.user.username : null,
         summary: service.summary !== null,
-        sessionPhase: service.tokenSession.phase
+        sessionPhase: service.tokenSession.phase,
+        accountError: service.tokenSession.accountError ? service.tokenSession.accountError.key : null
       })
       log("background", { attached: service.attached, backgroundRefresh: service.backgroundRefresh, reminderActive: service.reminder.active })
       log("keyringAvailable", service.keyringAvailable)
@@ -112,6 +114,7 @@ ShellRoot {
     encoding: "utf8",
     timeout: startMs + waitMs + 12000
   })
+  if (legacyDirMode !== null && fs.existsSync(tokenDir)) fs.chmodSync(tokenDir, 0o700)
   const results = { log: result.stdout + result.stderr }
   for (const line of (result.stdout + result.stderr).split("\n")) {
     const m = /RESULT (\{.*\})\s*$/.exec(line)
@@ -138,7 +141,7 @@ test("Disconnect on one screen wins over a token check on another", { skip }, ()
     screenB.service.tokenSession.disconnect()
   `, 3500)
   assert.equal(r.file, null)
-  assert.deepEqual(r.final, { hasToken: false, storeToken: "", user: null, summary: false, sessionPhase: "idle" })
+  assert.deepEqual(r.final, { hasToken: false, storeToken: "", user: null, summary: false, sessionPhase: "idle", accountError: null })
 })
 
 // Two screens refreshing at once share one request batch instead of each
@@ -272,4 +275,32 @@ test("Removing the last widget during a popup refresh starts no detail requests"
   `, 4000, 2800)
   assert.equal(details(r), 0, r.curlCalls.join("\n"))
   assert.equal(r.final.user, "old-account")   // from the startup refresh, before detaching
+})
+
+// The previous version gave the apiToken setting precedence over the file.
+// With an empty keyring and both present, the setting's token must win,
+// and only one token is written.
+test("Migration prefers the apiToken setting over the token file", { skip }, () => {
+  const OTHER = "cccccccc-3333-4333-8333-333333333333"
+  const r = run(`log("retired", retiredCount)`, 2500, 800, { settings: { apiToken: NEW }, tokenFile: false, legacyFile: OTHER })
+  assert.equal(r.file, NEW)
+  assert.equal(r.final.storeToken, NEW)
+  assert.equal(r.legacyFileLeft, false)
+  assert.equal(r.retired, 1)
+  assert.equal(r.keyringCalls.filter(c => c.startsWith("store")).length, 1, r.keyringCalls.join("\n"))
+})
+
+// A token file that can't be deleted after migrating must be reported, and
+// a later Disconnect must not claim success while the file survives: the
+// next start would import it again.
+test("A token file that can't be deleted is reported, at migration and at Disconnect", { skip }, () => {
+  const r = run(`
+    log("afterMigration", service.tokenSession.accountError ? service.tokenSession.accountError.key : null)
+    service.tokenSession.disconnect()
+  `, 2500, 1500, { tokenFile: false, legacyFile: NEW, legacyDirMode: 0o500 })
+  assert.equal(r.afterMigration, "settings.legacyFileLeft")
+  assert.equal(r.legacyFileLeft, true)
+  assert.equal(r.file, null)                        // the keyring entry is gone
+  assert.equal(r.final.accountError, "settings.legacyFileLeft")
+  assert.equal(r.final.hasToken, false)
 })

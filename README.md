@@ -156,11 +156,11 @@ The minimum number of waiting reviews needed to send a reminder. Raise it if a h
 
 ### Account
 
-The token is not a setting: it lives only in your system keyring. Versions before 0.6 kept it in `~/.config/kanibar/token` or, optionally, as a plaintext `apiToken` setting in `shell.json`. kanibar moves either into the keyring on first start and then deletes the file and removes the setting.
+The token is not a setting: it lives only in your system keyring. Versions before 0.6 kept it in `~/.config/kanibar/token` or, optionally, as a plaintext `apiToken` setting in `shell.json`. kanibar moves one of them into the keyring on first start (a token already in the keyring wins, then the setting, as before), and only then deletes the file and removes the setting. If the file can't be deleted, the settings page tells you, since kanibar would otherwise import it again.
 
 The settings page's **Account** section shows who you're connected as, and has:
 - **Change token:** opens the token field. The old token keeps working until the new one is verified.
-- **Disconnect:** removes the token from the keyring and clears the displayed data.
+- **Disconnect:** removes the token from the keyring, checks that it's really gone, and clears the displayed data. If your keyring is locked, you're asked to unlock it; if the removal can't be confirmed, kanibar says so and stops using the token.
 
 ### Example `shell.json` entry
 
