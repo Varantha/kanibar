@@ -13,12 +13,31 @@ QtObject {
 
   property string token: ""
 
-  // Runs `callback` exactly once, always asynchronously. `tokenOverride`
-  // checks a token that isn't saved yet.
+  // Account isolation: bumped whenever the active token changes or is
+  // removed. A request made with the active token belongs to the generation
+  // it started in, and its result is dropped (the callback never runs) once
+  // the generation has moved on, so an old account's data can't come back
+  // after a disconnect or token change. Owners reset their in-flight flags
+  // on generationChanged.
+  property int generation: 0
+  onTokenChanged: generation++
+
+  // Runs `callback` at most once, always asynchronously: exactly once,
+  // unless the active token changes first. `tokenOverride` checks a token
+  // that isn't saved yet; such a request belongs to no account generation
+  // and always reports back.
   function get(path, callback, tokenOverride) {
     var token = tokenOverride || client.token
+    var generation = client.generation
+    var scoped = !tokenOverride
+
+    function report(status, json) {
+      if (scoped && generation !== client.generation) return
+      callback(status, json)
+    }
+
     if (!Model.isValidToken(token)) {
-      Qt.callLater(function() { callback(Model.STATUS_BAD_TOKEN, null) })
+      Qt.callLater(function() { report(Model.STATUS_BAD_TOKEN, null) })
       return
     }
 
@@ -37,7 +56,7 @@ QtObject {
       backstop.destroy()
       if (proc.running) proc.running = false
       proc.destroy()
-      callback(status, json)
+      report(status, json)
     }
 
     // curl is done once it exited and its output is collected, in either
@@ -67,7 +86,8 @@ QtObject {
   }
 
   // Requests every path in parallel and calls `callback` once with an array
-  // of { status, json } in the same order.
+  // of { status, json } in the same order. Dropped as a whole if the active
+  // token changes before every request is back.
   function getAll(paths, callback) {
     var results = []
     var pending = paths.length

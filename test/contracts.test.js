@@ -76,3 +76,27 @@ test("IPC setting keys are the manifest's settings without apiToken", () => {
   assert.equal(Model.ipcSettingAllowed("id"), false)
   assert.equal(Model.ipcSettingAllowed("__proto__"), false)
 })
+
+// Account isolation: every writable property in Panel.qml's account block
+// must be cleared by resetAccount(), which runs whenever the active token
+// changes or is removed.
+test("resetAccount clears every account-scoped property", () => {
+  const panel = qmlSources["Panel.qml"]
+  const block = panel.slice(panel.indexOf("// ---------- State ----------"), panel.indexOf("// ---------- End of account state ----------"))
+  const props = [...block.matchAll(/^\s*property \S+ (\w+):/gm)].map(m => m[1])
+  assert.ok(props.length >= 10, "account block not found or too small: " + props)
+  const reset = panel.slice(panel.indexOf("function resetAccount()"), panel.indexOf("function forgetAccount()"))
+  const missing = props.filter(p => !new RegExp("root\\." + p + " = ").test(reset))
+  assert.deepEqual(missing, [])
+  assert.match(panel, /onApiTokenChanged: \{\s*root\.resetAccount\(\)/)
+})
+
+test("the client drops results from a previous token", () => {
+  const client = qmlSources["WaniKaniClient.qml"]
+  assert.match(client, /onTokenChanged: generation\+\+/)
+  assert.match(client, /if \(scoped && generation !== client\.generation\) return/)
+  // Every way a result reaches the caller goes through report(), the only
+  // place get() calls the callback.
+  const get = client.slice(client.indexOf("function get("), client.indexOf("function getAll("))
+  assert.equal(get.match(/\bcallback\(/g).length, 1)
+})

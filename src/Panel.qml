@@ -45,14 +45,21 @@ Panel {
   readonly property string reminderTime: Model.clockText(setting("reminderTime", Model.DEFAULT_REMINDER_TIME))
   readonly property int reminderMinReviews: Model.intSetting(setting("reminderMinReviews", 1), 1, 1)
 
+  // The clock for relative times; not account data.
+  property real now: Date.now()
+
   // ---------- State ----------
-  // summary/user are kept on failure so stale numbers stay visible.
+  // Everything between here and "End of account state" belongs to the
+  // active token's account. resetAccount() clears all of it whenever that
+  // token changes or is removed (test/contracts.test.js checks it), and
+  // WaniKaniClient drops results of requests made with the previous token.
+  // Within one account, summary/user are kept on failure so stale numbers
+  // stay visible.
   property var summary: null
   property var user: null
   property var error: null              // Model message or null
   property bool loading: false
   property real lastUpdated: 0
-  property real now: Date.now()
 
   readonly property int reviews: summary ? summary.reviews : 0
   readonly property int lessons: summary ? summary.lessons : 0
@@ -71,6 +78,7 @@ Panel {
   // ---------- In-popup token entry ----------
   property bool tokenRejected: false   // last refresh got a 401 or the token is malformed
   property bool tokenMalformed: false  // the stored token isn't a valid API token
+  // ---------- End of account state ----------
   property bool editingToken: false    // "Change token" clicked
   property bool tokenBusy: false
   property var tokenError: null        // Model message or null
@@ -160,7 +168,8 @@ Panel {
         root.tokenError = status === 401 ? Model.message("token.unknown") : Model.errorInfo(status)
         return
       }
-      root.user = Model.parseUser(json)
+      // Only saved here: the account's data is fetched once this token is
+      // the active one.
       tokenStore.save(token)
     }, token)
   }
@@ -171,23 +180,33 @@ Panel {
       root.tokenError = Model.message("token.writeFailed", tokenStore.path)
       return
     }
+    // Re-entering the active token changes nothing, so nothing resets these.
     root.tokenRejected = false
     root.tokenMalformed = false
-    root.editingToken = false
     root.error = null
+    root.editingToken = false
     root.refresh()
   }
 
-  function forgetAccount() {
+  // Clears everything that belongs to the active token's account, including
+  // in-flight flags: the client drops the results those were waiting for.
+  function resetAccount() {
     root.summary = null
     root.user = null
+    root.error = null
+    root.loading = false
+    root.lastUpdated = 0
     root.srsCounts = null
     root.levelInfo = null
+    root.detailsLoading = false
     root.detailsUpdated = 0
-    root.lastUpdated = 0
-    root.error = null
+    root.detailsLevel = 0
     root.tokenRejected = false
     root.tokenMalformed = false
+  }
+
+  function forgetAccount() {
+    root.resetAccount()
     root.view = "main"
   }
 
@@ -219,7 +238,10 @@ Panel {
     root.close()
   }
 
-  onApiTokenChanged: Qt.callLater(refresh)
+  onApiTokenChanged: {
+    root.resetAccount()
+    Qt.callLater(refresh)
+  }
   onOpenedChanged: {
     if (opened) {
       refresh()
@@ -391,7 +413,8 @@ Panel {
           // PanelHero renders meta as PlainText (and upper-cases it).
           meta: {
             if (root.inSettings) return strings.t("hero.settingsMeta")
-            if (!root.user) return root.hasToken ? strings.t("hero.loading") : strings.t("hero.notConnected")
+            if (!root.hasToken) return strings.t("hero.notConnected")
+            if (!root.user) return strings.t("hero.loading")
             var level = strings.formatNumber(root.user.level)
             return root.user.username
               ? Model.fill(strings.t("hero.levelUser"), level, root.user.username)
@@ -419,8 +442,9 @@ Panel {
           reminderTime: root.reminderTime
           reminderMinReviews: root.reminderMinReviews
           reminderSentToday: reminder.lastDate === Model.dateKey(root.now)
-          username: root.user ? root.user.username : ""
-          level: root.user ? root.user.level : 0
+          // Account details only while a token is active.
+          username: root.hasToken && root.user ? root.user.username : ""
+          level: root.hasToken && root.user ? root.user.level : 0
           hasToken: root.hasToken
           tokenFromSettings: root.settingsToken !== ""
           tokenFromFile: tokenStore.token !== ""

@@ -24,6 +24,13 @@ Item {
   // Fresh counts fetched for the check, so the panel can show them too.
   signal summaryFetched(var summary)
 
+  // A check in flight for the previous token is dropped by the client, so
+  // don't wait for it.
+  Connections {
+    target: reminder.client
+    function onGenerationChanged() { reminder.checking = false }
+  }
+
   function check() {
     var now = Date.now()
     if (!reminder.active || !reminder.stateLoaded || reminder.checking) return
