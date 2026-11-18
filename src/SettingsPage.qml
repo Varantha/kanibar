@@ -29,6 +29,7 @@ Column {
   property bool hasToken: false
   property bool tokenFromSettings: false   // apiToken in shell.json wins over the file
   property bool tokenFromFile: false
+  property var accountError: null          // Model message, e.g. a failed disconnect
 
   // True while a text field has focus, so the panel lets keys through.
   readonly property bool typing: reminderTimeField.activeFocus
@@ -203,6 +204,15 @@ Column {
       fontFamily: page.fontFamily
       onActivated: page.disconnectRequested()
     }
+  }
+  PlainText {
+    visible: page.accountError !== null
+    width: parent.width
+    wrapMode: Text.WordWrap
+    text: page.l10n.message(page.accountError)
+    foreground: Commons.Color.urgent
+    fontFamily: page.fontFamily
+    font.pixelSize: Style.font.bodySmall
   }
   CaptionText {
     visible: page.tokenFromSettings

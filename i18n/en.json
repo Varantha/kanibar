@@ -88,6 +88,7 @@
   "settings.notConnected": "Not connected.",
   "settings.changeToken": "Change token",
   "settings.disconnect": "Disconnect",
+  "settings.disconnectFailed": "Couldn't delete %1. Your token is still saved, so kanibar stays connected.",
   "settings.usingApiToken": "Using the token from the widget's apiToken setting in shell.json.",
 
   "reminder.headline": { "one": "%1 WaniKani review waiting", "other": "%1 WaniKani reviews waiting" },

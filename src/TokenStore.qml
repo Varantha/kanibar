@@ -16,24 +16,47 @@ Item {
   property string token: ""
 
   property string pendingToken: ""
+  // True from save() until its result is in. Process.running isn't enough:
+  // it only turns true once the process has actually started.
+  property bool saving: false
+  // A removal asked for while a save was still writing. It runs once the
+  // save is done, so the save can't land after it and bring the token back.
+  property bool removeQueued: false
 
   signal saved(bool ok)
-  signal removed()
+  // ok is false when the token file could not be deleted and is still there.
+  signal removed(bool ok)
 
   function save(newToken) {
+    store.saving = true
     store.pendingToken = newToken
     saveProc.running = true
   }
 
   function remove() {
+    if (store.saving) {
+      store.removeQueued = true
+      return
+    }
     removeProc.running = true
   }
 
   function finishSave(ok) {
-    // Use it right away; the FileView watch confirms it moments later.
-    if (ok) store.token = store.pendingToken
+    store.saving = false
+    var removeNext = store.removeQueued
+    store.removeQueued = false
+    // Use it right away (the FileView watch confirms it moments later),
+    // unless a removal is waiting: then the new token never becomes active.
+    if (ok && !removeNext) store.token = store.pendingToken
     store.pendingToken = ""
-    store.saved(ok)
+    store.saved(ok && !removeNext)
+    if (removeNext) removeProc.running = true
+  }
+
+  function finishRemove(ok) {
+    // On failure the file is still there, and so is the token.
+    if (ok) store.token = ""
+    store.removed(ok)
   }
 
   // First makes sure the token directory is ours and private: it must be a
@@ -75,10 +98,7 @@ Item {
   Process {
     id: removeProc
     command: ["rm", "-f", store.path]
-    onExited: {
-      store.token = ""
-      store.removed()
-    }
+    onExited: function(exitCode) { store.finishRemove(exitCode === 0) }
   }
 
   FileView {

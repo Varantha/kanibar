@@ -85,7 +85,8 @@ test("resetAccount clears every account-scoped property", () => {
   const block = panel.slice(panel.indexOf("// ---------- State ----------"), panel.indexOf("// ---------- End of account state ----------"))
   const props = [...block.matchAll(/^\s*property \S+ (\w+):/gm)].map(m => m[1])
   assert.ok(props.length >= 10, "account block not found or too small: " + props)
-  const reset = panel.slice(panel.indexOf("function resetAccount()"), panel.indexOf("function forgetAccount()"))
+  const reset = panel.slice(panel.indexOf("function resetAccount()"), panel.indexOf("function abandonTokenEntry()"))
+  assert.ok(reset.length > 0 && reset.length < 1500, "resetAccount() not found")
   const missing = props.filter(p => !new RegExp("root\\." + p + " = ").test(reset))
   assert.deepEqual(missing, [])
   assert.match(panel, /onApiTokenChanged: \{\s*root\.resetAccount\(\)/)
@@ -99,4 +100,27 @@ test("the client drops results from a previous token", () => {
   // place get() calls the callback.
   const get = client.slice(client.indexOf("function get("), client.indexOf("function getAll("))
   assert.equal(get.match(/\bcallback\(/g).length, 1)
+})
+
+// A token check or save must not connect an account after Disconnect or
+// Cancel: both bump tokenFlow, and the check's callback bails out first.
+test("Disconnect and Cancel abandon a pending token check", () => {
+  const panel = qmlSources["Panel.qml"]
+  const fn = (name) => panel.slice(panel.indexOf("function " + name + "("), panel.indexOf("\n  }\n", panel.indexOf("function " + name + "(")))
+  assert.match(fn("submitToken"), /var flow = root\.tokenFlow\s+apiClient\.get\("\/user", function\(status, json\) \{\s+if \(flow !== root\.tokenFlow\) return/)
+  assert.match(fn("finishTokenSave"), /^function finishTokenSave\(ok\) \{\s+if \(root\.savingFlow !== root\.tokenFlow\) return/)
+  assert.match(fn("abandonTokenEntry"), /root\.tokenFlow\+\+/)
+  assert.match(fn("disconnect"), /root\.abandonTokenEntry\(\)[\s\S]*tokenStore\.remove\(\)/)
+  assert.match(fn("cancelTokenEntry"), /root\.abandonTokenEntry\(\)/)
+})
+
+test("a failed delete is reported, not treated as a disconnect", () => {
+  const store = qmlSources["TokenStore.qml"]
+  assert.match(store, /onExited: function\(exitCode\) \{ store\.finishRemove\(exitCode === 0\) \}/)
+  assert.match(store, /if \(ok\) store\.token = ""/)
+  // A removal during a save waits for it. This must use the store's own flag:
+  // Process.running is still false right after a process is asked to start.
+  assert.match(store, /function remove\(\) \{\s+if \(store\.saving\) \{\s+store\.removeQueued = true/)
+  const panel = qmlSources["Panel.qml"]
+  assert.match(panel, /onRemoved: function\(ok\) \{ root\.finishDisconnect\(ok\) \}/)
 })
